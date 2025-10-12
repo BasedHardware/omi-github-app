@@ -1,0 +1,198 @@
+import os
+import requests
+from typing import Optional, List, Dict
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+class GitHubClient:
+    """Handles GitHub API interactions."""
+    
+    def __init__(self):
+        self.client_id = os.getenv("GITHUB_CLIENT_ID")
+        self.client_secret = os.getenv("GITHUB_CLIENT_SECRET")
+        self.api_base = "https://api.github.com"
+    
+    def get_authorization_url(self, redirect_uri: str, state: str) -> str:
+        """
+        Generate GitHub OAuth authorization URL.
+        Scopes: repo (for creating issues in public/private repos)
+        """
+        scopes = "repo"
+        auth_url = (
+            f"https://github.com/login/oauth/authorize?"
+            f"client_id={self.client_id}&"
+            f"redirect_uri={redirect_uri}&"
+            f"scope={scopes}&"
+            f"state={state}"
+        )
+        return auth_url
+    
+    def exchange_code_for_token(self, code: str) -> dict:
+        """
+        Exchange authorization code for access token.
+        Returns token data including access_token.
+        """
+        try:
+            response = requests.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "code": code
+                }
+            )
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                if "access_token" in token_data:
+                    return token_data
+                else:
+                    raise Exception(f"No access token in response: {token_data}")
+            else:
+                raise Exception(f"Token exchange failed: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Token exchange error: {e}")
+            raise
+    
+    def get_user_info(self, access_token: str) -> dict:
+        """Get authenticated user's GitHub info."""
+        try:
+            response = requests.get(
+                f"{self.api_base}/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise Exception(f"Failed to get user info: {response.status_code}")
+                
+        except Exception as e:
+            print(f"❌ Error getting user info: {e}")
+            raise
+    
+    def list_user_repos(self, access_token: str, per_page: int = 100) -> List[Dict]:
+        """
+        List all repositories the user has access to (owned + collaborator).
+        Returns list of {name, full_name, owner, private, description}
+        """
+        try:
+            repos = []
+            
+            # Get user's own repos
+            response = requests.get(
+                f"{self.api_base}/user/repos",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                params={"per_page": per_page, "sort": "updated"}
+            )
+            
+            if response.status_code == 200:
+                user_repos = response.json()
+                for repo in user_repos:
+                    repos.append({
+                        "name": repo["name"],
+                        "full_name": repo["full_name"],
+                        "owner": repo["owner"]["login"],
+                        "private": repo["private"],
+                        "description": repo.get("description", ""),
+                        "url": repo["html_url"]
+                    })
+            
+            return repos
+            
+        except Exception as e:
+            print(f"❌ Error listing repos: {e}")
+            return []
+    
+    def get_repo_labels(self, access_token: str, repo_full_name: str) -> List[str]:
+        """
+        Fetch all labels from a repository.
+        Returns list of label names.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/labels",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                params={"per_page": 100}
+            )
+            
+            if response.status_code == 200:
+                labels = response.json()
+                return [label["name"] for label in labels]
+            else:
+                print(f"⚠️  Could not fetch labels: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            print(f"⚠️  Error fetching labels: {e}")
+            return []
+    
+    async def create_issue(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        title: str,
+        body: str,
+        labels: Optional[List[str]] = None
+    ) -> Optional[dict]:
+        """
+        Create an issue in the specified repository.
+        repo_full_name: "owner/repo"
+        Returns issue data if successful.
+        """
+        try:
+            issue_data = {
+                "title": title,
+                "body": body
+            }
+            
+            if labels:
+                issue_data["labels"] = labels
+            
+            response = requests.post(
+                f"{self.api_base}/repos/{repo_full_name}/issues",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json=issue_data
+            )
+            
+            if response.status_code == 201:
+                issue = response.json()
+                return {
+                    "success": True,
+                    "issue_number": issue["number"],
+                    "issue_url": issue["html_url"],
+                    "title": issue["title"]
+                }
+            else:
+                error_msg = response.json().get("message", response.text)
+                print(f"❌ GitHub API error: {response.status_code} - {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"GitHub API error: {error_msg}"
+                }
+                
+        except Exception as e:
+            print(f"❌ Error creating issue: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
