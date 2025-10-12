@@ -25,52 +25,8 @@ app = FastAPI(
 # Store OAuth states temporarily (in production, use Redis or similar)
 oauth_states = {}
 
-# Background task to check for idle sessions
-async def check_idle_sessions():
-    """Background task that checks for idle recording sessions and processes them."""
-    while True:
-        try:
-            await asyncio.sleep(5)  # Check every 5 seconds
-            
-            from simple_storage import sessions
-            idle_sessions = []
-            
-            for session_id, session in sessions.items():
-                if session.get("issue_mode") == "recording":
-                    segments_count = session.get("segments_count", 0)
-                    accumulated = session.get("accumulated_text", "")
-                    
-                    # Check idle time
-                    idle_time = SimpleSessionStorage.get_session_idle_time(session_id)
-                    
-                    # If user silent for 5+ seconds and has at least 3 segments
-                    if idle_time and idle_time > 5 and segments_count >= 3:
-                        print(f"🔔 Background: Found idle session {session_id} ({idle_time:.1f}s, {segments_count} segments)", flush=True)
-                        idle_sessions.append((session_id, session, accumulated, segments_count))
-            
-            # Process idle sessions
-            for session_id, session, accumulated, segments_count in idle_sessions:
-                uid = session.get("uid")
-                user = SimpleUserStorage.get_user(uid)
-                
-                if user and user.get("access_token") and user.get("selected_repo"):
-                    print(f"⏱️  Processing idle session {session_id} with {segments_count} segments...", flush=True)
-                    
-                    # Mark as processing
-                    SimpleSessionStorage.update_session(
-                        session_id,
-                        issue_mode="processing"
-                    )
-                    
-                    # Process the issue
-                    try:
-                        await process_issue_creation(session_id, accumulated, segments_count, user)
-                    except Exception as e:
-                        print(f"❌ Error processing idle session: {e}", flush=True)
-                        SimpleSessionStorage.reset_session(session_id)
-        
-        except Exception as e:
-            print(f"⚠️  Background task error: {e}", flush=True)
+# Note: Removed background task - notifications only work through webhook responses
+# Idle sessions are now detected and processed on the next webhook call
 
 async def process_issue_creation(session_id: str, accumulated: str, segments_count: int, user: dict) -> str:
     """
@@ -135,9 +91,8 @@ async def process_issue_creation(session_id: str, accumulated: str, segments_cou
 
 @app.on_event("startup")
 async def startup_event():
-    """Start background tasks on app startup."""
-    asyncio.create_task(check_idle_sessions())
-    print("🔄 Started background idle session checker", flush=True)
+    """App startup - all initialization complete."""
+    print("🔄 App started - idle sessions processed on webhook calls", flush=True)
 
 
 @app.get("/")
@@ -649,7 +604,31 @@ async def webhook(
     # Debug session state
     print(f"📊 Session state: mode={session.get('issue_mode')}, count={session.get('segments_count', 0)}", flush=True)
     
-    # Process segments
+    # Check if there's an idle recording session that should be processed
+    # This ensures we send notifications even after timeout
+    if session.get("issue_mode") == "recording":
+        segments_count = session.get("segments_count", 0)
+        accumulated = session.get("accumulated_text", "")
+        idle_time = SimpleSessionStorage.get_session_idle_time(session_id)
+        
+        # If user has been silent for 5+ seconds and we have minimum segments, process now!
+        if idle_time and idle_time > 5 and segments_count >= 3:
+            print(f"⏱️  Timeout detected on webhook: {idle_time:.1f}s idle, {segments_count} segments", flush=True)
+            SimpleSessionStorage.update_session(
+                session_id,
+                issue_mode="processing"
+            )
+            # Process and return notification
+            result_message = await process_issue_creation(session_id, accumulated, segments_count, user)
+            if result_message and ("✅ Issue created:" in result_message or "❌" in result_message):
+                print(f"✉️  TIMEOUT NOTIFICATION: {result_message}", flush=True)
+                return {
+                    "message": result_message,
+                    "session_id": session_id,
+                    "processed_segments": segments_count
+                }
+    
+    # Process segments normally
     response_message = await process_segments(session, segments, user)
     
     # Only send notifications for final issue creation
