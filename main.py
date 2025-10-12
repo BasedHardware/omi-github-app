@@ -171,30 +171,65 @@ async def root(uid: str = Query(None)):
             </head>
             <body>
                 <div class="container">
-                    <div class="icon">🐙✨</div>
-                    <h1>GitHub Issues Voice Poster</h1>
-                    <p>Create GitHub issues with your voice using OMI!</p>
+                    <div class="icon">🎤→📝</div>
+                    <h1>Voice to GitHub Issues</h1>
+                    <p style="font-size: 18px; opacity: 1;">Transform your voice into perfectly formatted GitHub issues</p>
                     
-                    <a href="{auth_url}" class="btn btn-primary">🔐 Connect GitHub Account</a>
+                    <a href="{auth_url}" class="btn btn-primary btn-block" style="font-size: 17px; padding: 16px;">
+                        🔐 Connect GitHub Account
+                    </a>
                     
                     <div class="card">
-                        <h3>📱 How to Use</h3>
-                        <ol>
-                            <li>Connect your GitHub account</li>
-                            <li>Select which repository to create issues in</li>
-                            <li>Say <strong>"Feedback Post"</strong> to your OMI</li>
-                            <li>Describe your problem in detail</li>
-                            <li>AI creates a properly formatted issue!</li>
-                        </ol>
+                        <h3>✨ How It Works</h3>
+                        <div class="steps">
+                            <div class="step">
+                                <div class="step-number">1</div>
+                                <div class="step-content">
+                                    <strong>Connect</strong> your GitHub account securely
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-number">2</div>
+                                <div class="step-content">
+                                    <strong>Select</strong> the repository for your issues
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-number">3</div>
+                                <div class="step-content">
+                                    <strong>Speak</strong> naturally to describe your issue
+                                </div>
+                            </div>
+                            <div class="step">
+                                <div class="step-number">4</div>
+                                <div class="step-content">
+                                    <strong>Done!</strong> AI creates a professional GitHub issue
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="card">
-                        <h3>💬 Example</h3>
-                        <div class="example">
-                            "Feedback Post, the app keeps crashing when I try to upload photos. 
-                            It happens every time on my iPhone. The app freezes for a second and 
-                            then closes completely. This started after the latest update."
-                        </div>
+                        <h3>🎯 Features</h3>
+                        <ul style="list-style: none; padding: 0;">
+                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                                <strong>🤖 AI-Powered</strong> - Intelligent formatting and error correction
+                            </li>
+                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                                <strong>🏷️ Smart Labels</strong> - Automatically assigns relevant tags
+                            </li>
+                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                                <strong>⚡ Fast</strong> - Issues created in seconds
+                            </li>
+                            <li style="padding: 10px 0;">
+                                <strong>🔒 Secure</strong> - OAuth 2.0 authentication
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="footer">
+                        <p>Powered by <strong style="color: white;">Omi</strong> × <strong style="color: white;">AI</strong></p>
+                        <p style="font-size: 13px; margin-top: 8px;">Intelligent voice-to-issue platform</p>
                     </div>
                 </div>
             </body>
@@ -224,65 +259,78 @@ async def root(uid: str = Query(None)):
         <body>
             <div class="container">
                 <div class="header-success">
-                    <div class="icon">✅</div>
-                    <h1>Connected to GitHub</h1>
+                    <div class="icon">✨</div>
+                    <h1>All Set!</h1>
                     <p class="username">@{github_username}</p>
+                    <p style="font-size: 15px; margin-top: 10px;">Your voice issues will be created automatically</p>
                 </div>
                 
                 <div class="card">
-                    <h2>📋 Issue Repository</h2>
-                    <p>Select where voice feedback issues should be created:</p>
+                    <h2 style="color: #667eea;">📋 Target Repository</h2>
+                    <p style="color: #666; text-align: left; font-size: 15px; margin-bottom: 16px;">
+                        Issues will be created in this repository:
+                    </p>
                     
                     <select id="repoSelect" class="repo-select">
                         {repo_options if repo_options else '<option>No repositories found</option>'}
                     </select>
                     
-                    <button class="btn btn-primary" onclick="updateRepo()">💾 Save Repository</button>
-                    <button class="btn btn-secondary" onclick="refreshRepos()">🔄 Refresh Repos</button>
+                    <button class="btn btn-primary btn-block" onclick="updateRepo()">
+                        💾 Save Repository
+                    </button>
+                    <button class="btn btn-secondary btn-block" onclick="refreshRepos()">
+                        🔄 Refresh Repositories
+                    </button>
                 </div>
                 
                 <div class="card">
-                    <h3>🎤 How to Create Issues</h3>
+                    <h3>🎤 Using Voice Commands</h3>
+                    <p style="color: #666; text-align: left; margin-bottom: 16px;">
+                        Simply speak to your OMI device:
+                    </p>
                     <div class="steps">
                         <div class="step">
                             <div class="step-number">1</div>
                             <div class="step-content">
-                                Say <strong>"Feedback Post"</strong> to your OMI device
+                                Say any trigger phrase like <strong>"Bug Report"</strong> or <strong>"Create Issue"</strong>
                             </div>
                         </div>
                         <div class="step">
                             <div class="step-number">2</div>
                             <div class="step-content">
-                                Describe your problem in detail (speak naturally for 15-20 seconds)
+                                Describe your issue naturally - AI handles the rest
                             </div>
                         </div>
                         <div class="step">
                             <div class="step-number">3</div>
                             <div class="step-content">
-                                AI processes your speech and creates a formatted issue
-                            </div>
-                        </div>
-                        <div class="step">
-                            <div class="step-number">4</div>
-                            <div class="step-content">
-                                Get notification with issue link!
+                                Receive a notification with your new issue link
                             </div>
                         </div>
                     </div>
                 </div>
                 
-                <div class="card">
-                    <h3>💡 Tips</h3>
-                    <ul>
-                        <li>Speak clearly and describe the problem in detail</li>
-                        <li>Mention what you were doing when it happened</li>
-                        <li>Include device/browser info if relevant</li>
-                        <li>The AI will format everything nicely for you!</li>
+                <div class="card" style="background: linear-gradient(135deg, #f6f8fa 0%, #e9ecef 100%);">
+                    <h3>💡 Pro Tips</h3>
+                    <ul style="list-style: none; padding: 0;">
+                        <li style="padding: 8px 0; color: #24292e;">
+                            🎯 <strong>Be specific</strong> - Mention device, steps, or expected behavior
+                        </li>
+                        <li style="padding: 8px 0; color: #24292e;">
+                            🗣️ <strong>Speak naturally</strong> - AI corrects transcription errors
+                        </li>
+                        <li style="padding: 8px 0; color: #24292e;">
+                            📊 <strong>Any length works</strong> - Quick or detailed, both work great
+                        </li>
+                        <li style="padding: 8px 0; color: #24292e;">
+                            🏷️ <strong>Auto-labeled</strong> - Smart tags applied automatically
+                        </li>
                     </ul>
                 </div>
                 
-                <div class="card">
-                    <a href="/test?uid={uid}" class="btn btn-secondary btn-block">🧪 Test Interface</a>
+                <div class="footer">
+                    <p>Powered by <strong style="color: white;">Omi</strong> × <strong style="color: white;">AI</strong></p>
+                    <p style="font-size: 13px; margin-top: 8px;">Voice-activated issue tracking for modern teams</p>
                 </div>
             </div>
             
@@ -424,25 +472,36 @@ async def auth_callback(
             <html>
                 <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>Connected Successfully!</title>
                     <style>
                         {get_mobile_css()}
                     </style>
                 </head>
                 <body>
                     <div class="container">
-                        <div class="success-box">
-                            <div class="icon">✅</div>
-                            <h2>Successfully Connected!</h2>
-                            <p>Your GitHub account <strong>@{github_username}</strong> is now linked to OMI.</p>
-                            <p>Found <strong>{len(repos)}</strong> repositories.</p>
+                        <div class="success-box" style="padding: 40px 24px;">
+                            <div class="icon" style="font-size: 72px; animation: pulse 1.5s infinite;">🎉</div>
+                            <h2 style="color: #155724; font-size: 28px; margin: 16px 0;">Successfully Connected!</h2>
+                            <p style="color: #155724; font-size: 17px; margin: 12px 0;">
+                                Your GitHub account <strong style="color: #0d4d1a;">@{github_username}</strong> is now linked
+                            </p>
+                            <p style="color: #155724; font-size: 16px; margin: 8px 0;">
+                                Found <strong>{len(repos)}</strong> {('repository' if len(repos) == 1 else 'repositories')}
+                            </p>
                         </div>
                         
-                        <a href="/?uid={uid}" class="btn btn-primary btn-block">Go to Settings →</a>
+                        <a href="/?uid={uid}" class="btn btn-primary btn-block" style="font-size: 17px; padding: 16px; margin-top: 24px;">
+                            Continue to Settings →
+                        </a>
                         
-                        <div class="card">
-                            <p style="text-align: center; color: #666;">
-                                You can now create issues by saying<br>
-                                <strong>"Feedback Post"</strong> to your OMI device!
+                        <div class="card" style="margin-top: 20px; text-align: center;">
+                            <h3 style="margin-bottom: 16px;">🎤 Ready to Go!</h3>
+                            <p style="color: #666; font-size: 16px; line-height: 1.8;">
+                                You can now create GitHub issues just by speaking to your OMI device.
+                                <br><br>
+                                Try saying:<br>
+                                <strong style="color: #667eea; font-size: 17px;">"Bug Report"</strong> or 
+                                <strong style="color: #667eea; font-size: 17px;">"Create Issue"</strong>
                             </p>
                         </div>
                     </div>
@@ -814,8 +873,23 @@ async def process_segments(
 
 
 @app.get("/test")
-async def test_interface(uid: str = Query("test_user_123")):
-    """Web interface for testing issue creation."""
+async def test_interface(uid: str = Query("test_user_123"), dev: str = Query(None)):
+    """Development testing interface - hidden in production."""
+    # Only show if dev parameter is provided
+    if not dev or dev != "true":
+        return HTMLResponse(content="""
+        <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Not Found</title>
+            </head>
+            <body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1>404 - Page Not Found</h1>
+                <p><a href="/">Go to Homepage</a></p>
+            </body>
+        </html>
+        """, status_code=404)
+    
     return HTMLResponse(content=f"""
     <html>
         <head>
@@ -1018,7 +1092,7 @@ async def health_check():
 
 
 def get_mobile_css() -> str:
-    """Returns mobile-first CSS styles."""
+    """Returns beautiful production-ready CSS styles."""
     return """
         * {
             margin: 0;
@@ -1026,99 +1100,135 @@ def get_mobile_css() -> str:
             box-sizing: border-box;
         }
         
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #24292e 0%, #1a1e22 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
             line-height: 1.6;
+            animation: fadeIn 0.5s ease-out;
         }
         
         .container {
-            max-width: 600px;
+            max-width: 650px;
             margin: 0 auto;
+            animation: fadeIn 0.6s ease-out;
         }
         
         .icon {
-            font-size: 48px;
+            font-size: 64px;
             text-align: center;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
         }
         
         h1 {
             color: white;
-            font-size: 28px;
+            font-size: 32px;
+            font-weight: 700;
             text-align: center;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
         }
         
         h2 {
             color: #24292e;
-            font-size: 22px;
+            font-size: 24px;
+            font-weight: 600;
             margin-bottom: 15px;
         }
         
         h3 {
             color: #24292e;
-            font-size: 18px;
-            margin-bottom: 10px;
+            font-size: 19px;
+            font-weight: 600;
+            margin-bottom: 12px;
         }
         
         p {
             color: white;
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
+            font-size: 16px;
+            opacity: 0.95;
         }
         
         .username {
-            color: #58a6ff;
+            color: #ffd700;
             font-weight: 600;
+            font-size: 18px;
         }
         
         .header-success {
-            background: linear-gradient(135deg, #2ea44f 0%, #238636 100%);
-            padding: 30px 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 24px;
+            border-radius: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
         }
         
         .card {
             background: white;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
         }
         
         .btn {
             display: inline-block;
-            padding: 12px 20px;
-            border-radius: 6px;
+            padding: 14px 28px;
+            border-radius: 12px;
             text-decoration: none;
             font-weight: 600;
-            font-size: 14px;
+            font-size: 15px;
             border: none;
             cursor: pointer;
-            transition: all 0.2s;
-            margin: 5px 5px 5px 0;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            margin: 8px 8px 8px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
         }
         
         .btn-primary {
-            background: #2ea44f;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
         }
         
         .btn-primary:hover {
-            background: #2c974b;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
         }
         
         .btn-secondary {
-            background: #6e7681;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
             color: white;
+            box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4);
         }
         
         .btn-secondary:hover {
-            background: #57606a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(240, 147, 251, 0.6);
         }
         
         .btn-block {
@@ -1129,26 +1239,43 @@ def get_mobile_css() -> str:
         
         .repo-select {
             width: 100%;
-            padding: 12px;
-            border: 2px solid #d0d7de;
-            border-radius: 6px;
-            font-size: 14px;
-            margin-bottom: 15px;
+            padding: 14px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px;
+            font-size: 15px;
+            margin-bottom: 18px;
             font-family: inherit;
+            background: #f7f9fa;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .repo-select:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
         
         input[type="text"], textarea {
             width: 100%;
-            padding: 12px;
-            border: 2px solid #d0d7de;
-            border-radius: 6px;
-            font-size: 14px;
+            padding: 14px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 12px;
+            font-size: 15px;
             font-family: inherit;
+            transition: all 0.2s;
+        }
+        
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
         
         textarea {
             resize: vertical;
-            min-height: 80px;
+            min-height: 100px;
         }
         
         .input-group {
@@ -1164,65 +1291,83 @@ def get_mobile_css() -> str:
         }
         
         .example {
-            background: #f6f8fa;
-            padding: 12px;
-            border-radius: 6px;
-            margin: 8px 0;
-            font-size: 13px;
+            background: linear-gradient(135deg, #f6f8fa 0%, #e9ecef 100%);
+            padding: 16px 18px;
+            border-radius: 12px;
+            margin: 12px 0;
+            font-size: 14px;
             cursor: pointer;
             border: 2px solid transparent;
             color: #24292e;
+            transition: all 0.3s;
+            line-height: 1.6;
         }
         
         .example:hover {
-            border-color: #2ea44f;
-            background: #e8f5e9;
+            border-color: #667eea;
+            background: linear-gradient(135deg, #e8eaf6 0%, #d1c4e9 100%);
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
         }
         
         .steps {
-            margin: 15px 0;
+            margin: 20px 0;
         }
         
         .step {
             display: flex;
-            margin: 15px 0;
+            margin: 18px 0;
             align-items: flex-start;
+            padding: 12px;
+            border-radius: 10px;
+            transition: background 0.2s;
+        }
+        
+        .step:hover {
+            background: #f8f9fa;
         }
         
         .step-number {
-            background: #2ea44f;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
-            margin-right: 12px;
+            margin-right: 14px;
             flex-shrink: 0;
+            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.3);
         }
         
         .step-content {
             flex: 1;
-            padding-top: 5px;
+            padding-top: 6px;
+            font-size: 15px;
+            line-height: 1.6;
         }
         
         .success-box {
-            background: #d4edda;
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
             color: #155724;
-            padding: 20px;
-            border-radius: 8px;
-            margin: 15px 0;
+            padding: 24px;
+            border-radius: 14px;
+            margin: 18px 0;
             text-align: center;
+            border: 2px solid #28a745;
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
         }
         
         .error-box {
-            background: #f8d7da;
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
             color: #721c24;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
+            padding: 18px;
+            border-radius: 14px;
+            margin: 14px 0;
+            border: 2px solid #dc3545;
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2);
         }
         
         .status {
@@ -1262,26 +1407,50 @@ def get_mobile_css() -> str:
         }
         
         strong {
-            color: #2ea44f;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .footer {
+            text-align: center;
+            color: rgba(255,255,255,0.7);
+            margin-top: 40px;
+            padding: 20px;
+            font-size: 14px;
+        }
+        
+        .footer a {
+            color: rgba(255,255,255,0.9);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .footer a:hover {
+            color: white;
+            text-decoration: underline;
         }
         
         @media (max-width: 480px) {
             body {
-                padding: 10px;
+                padding: 12px;
             }
             
             .card {
-                padding: 15px;
+                padding: 18px;
             }
             
             h1 {
-                font-size: 24px;
+                font-size: 26px;
             }
             
             .btn {
                 display: block;
                 width: 100%;
-                margin: 8px 0;
+                margin: 10px 0;
+            }
+            
+            .icon {
+                font-size: 52px;
             }
         }
     """
