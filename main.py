@@ -128,7 +128,7 @@ async def root(uid: str = Query(None)):
                 <div class="container">
                     <div class="icon">🎤→📝</div>
                     <h1>Voice to GitHub Issues</h1>
-                    <p style="font-size: 18px; opacity: 1;">Transform your voice into perfectly formatted GitHub issues</p>
+                    <p style="font-size: 18px;">Transform your voice into perfectly formatted GitHub issues</p>
                     
                     <a href="{auth_url}" class="btn btn-primary btn-block" style="font-size: 17px; padding: 16px;">
                         🔐 Connect GitHub Account
@@ -167,13 +167,13 @@ async def root(uid: str = Query(None)):
                     <div class="card">
                         <h3>🎯 Features</h3>
                         <ul style="list-style: none; padding: 0;">
-                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                            <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
                                 <strong>🤖 AI-Powered</strong> - Intelligent formatting and error correction
                             </li>
-                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                            <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
                                 <strong>🏷️ Smart Labels</strong> - Automatically assigns relevant tags
                             </li>
-                            <li style="padding: 10px 0; border-bottom: 1px solid #f0f0f0;">
+                            <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
                                 <strong>⚡ Fast</strong> - Issues created in seconds
                             </li>
                             <li style="padding: 10px 0;">
@@ -183,7 +183,7 @@ async def root(uid: str = Query(None)):
                     </div>
                     
                     <div class="footer">
-                        <p>Powered by <strong style="color: white;">Omi</strong> × <strong style="color: white;">AI</strong></p>
+                        <p>Powered by <strong>Omi</strong> × <strong>AI</strong></p>
                         <p style="font-size: 13px; margin-top: 8px;">Intelligent voice-to-issue platform</p>
                     </div>
                 </div>
@@ -221,8 +221,8 @@ async def root(uid: str = Query(None)):
                 </div>
                 
                 <div class="card">
-                    <h2 style="color: #667eea;">📋 Target Repository</h2>
-                    <p style="color: #666; text-align: left; font-size: 15px; margin-bottom: 16px;">
+                    <h2>📋 Target Repository</h2>
+                    <p style="text-align: left; font-size: 15px; margin-bottom: 16px;">
                         Issues will be created in this repository:
                     </p>
                     
@@ -240,7 +240,7 @@ async def root(uid: str = Query(None)):
                 
                 <div class="card">
                     <h3>🎤 Using Voice Commands</h3>
-                    <p style="color: #666; text-align: left; margin-bottom: 16px;">
+                    <p style="text-align: left; margin-bottom: 16px;">
                         Simply speak to your OMI device:
                     </p>
                     <div class="steps">
@@ -265,26 +265,26 @@ async def root(uid: str = Query(None)):
                     </div>
                 </div>
                 
-                <div class="card" style="background: linear-gradient(135deg, #f6f8fa 0%, #e9ecef 100%);">
+                <div class="card">
                     <h3>💡 Pro Tips</h3>
                     <ul style="list-style: none; padding: 0;">
-                        <li style="padding: 8px 0; color: #24292e;">
+                        <li style="padding: 8px 0;">
                             🎯 <strong>Be specific</strong> - Mention device, steps, or expected behavior
                         </li>
-                        <li style="padding: 8px 0; color: #24292e;">
+                        <li style="padding: 8px 0;">
                             🗣️ <strong>Speak naturally</strong> - AI corrects transcription errors
                         </li>
-                        <li style="padding: 8px 0; color: #24292e;">
+                        <li style="padding: 8px 0;">
                             📊 <strong>Any length works</strong> - Quick or detailed, both work great
                         </li>
-                        <li style="padding: 8px 0; color: #24292e;">
+                        <li style="padding: 8px 0;">
                             🏷️ <strong>Auto-labeled</strong> - Smart tags applied automatically
                         </li>
                     </ul>
                 </div>
                 
                 <div class="footer">
-                    <p>Powered by <strong style="color: white;">Omi</strong> × <strong style="color: white;">AI</strong></p>
+                    <p>Powered by <strong>Omi</strong> × <strong>AI</strong></p>
                     <p style="font-size: 13px; margin-top: 8px;">Voice-activated issue tracking for modern teams</p>
                 </div>
             </div>
@@ -371,11 +371,19 @@ async def auth_callback(
     """Handle OAuth callback from GitHub."""
     if not code or not state:
         return HTMLResponse(
-            content="""
+            content=f"""
             <html>
-                <body style="font-family: Arial; padding: 40px; text-align: center;">
-                    <h2>❌ Authentication Failed</h2>
-                    <p>Authorization code not received. Please try again.</p>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>{get_mobile_css()}</style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Authentication Failed</h2>
+                            <p style="margin-bottom: 0;">Authorization code not received. Please try again.</p>
+                        </div>
+                    </div>
                 </body>
             </html>
             """,
@@ -386,11 +394,19 @@ async def auth_callback(
     uid = oauth_states.get(state)
     if not uid:
         return HTMLResponse(
-            content="""
+            content=f"""
             <html>
-                <body style="font-family: Arial; padding: 40px; text-align: center;">
-                    <h2>❌ Invalid State</h2>
-                    <p>OAuth state mismatch. Please try again.</p>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>{get_mobile_css()}</style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Invalid State</h2>
+                            <p style="margin-bottom: 0;">OAuth state mismatch. Please try again.</p>
+                        </div>
+                    </div>
                 </body>
             </html>
             """,
@@ -436,11 +452,11 @@ async def auth_callback(
                     <div class="container">
                         <div class="success-box" style="padding: 40px 24px;">
                             <div class="icon" style="font-size: 72px; animation: pulse 1.5s infinite;">🎉</div>
-                            <h2 style="color: #155724; font-size: 28px; margin: 16px 0;">Successfully Connected!</h2>
-                            <p style="color: #155724; font-size: 17px; margin: 12px 0;">
-                                Your GitHub account <strong style="color: #0d4d1a;">@{github_username}</strong> is now linked
+                            <h2 style="font-size: 28px; margin: 16px 0;">Successfully Connected!</h2>
+                            <p style="font-size: 17px; margin: 12px 0;">
+                                Your GitHub account <strong>@{github_username}</strong> is now linked
                             </p>
-                            <p style="color: #155724; font-size: 16px; margin: 8px 0;">
+                            <p style="font-size: 16px; margin: 8px 0;">
                                 Found <strong>{len(repos)}</strong> {('repository' if len(repos) == 1 else 'repositories')}
                             </p>
                         </div>
@@ -451,12 +467,12 @@ async def auth_callback(
                         
                         <div class="card" style="margin-top: 20px; text-align: center;">
                             <h3 style="margin-bottom: 16px;">🎤 Ready to Go!</h3>
-                            <p style="color: #666; font-size: 16px; line-height: 1.8;">
+                            <p style="font-size: 16px; line-height: 1.8;">
                                 You can now create GitHub issues just by speaking to your OMI device.
                                 <br><br>
                                 Try saying:<br>
-                                <strong style="color: #667eea; font-size: 17px;">"Bug Report"</strong> or 
-                                <strong style="color: #667eea; font-size: 17px;">"Create Issue"</strong>
+                                <strong style="font-size: 17px;">"Bug Report"</strong> or 
+                                <strong style="font-size: 17px;">"Create Issue"</strong>
                             </p>
                         </div>
                     </div>
@@ -471,10 +487,18 @@ async def auth_callback(
         return HTMLResponse(
             content=f"""
             <html>
-                <body style="font-family: Arial; padding: 40px; text-align: center;">
-                    <h2>❌ Authentication Error</h2>
-                    <p>Failed to complete authentication: {str(e)}</p>
-                    <p><a href="/auth?uid={uid}">Try again</a></p>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>{get_mobile_css()}</style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Authentication Error</h2>
+                            <p style="margin-bottom: 16px;">Failed to complete authentication: {str(e)}</p>
+                            <a href="/auth?uid={uid}" class="btn btn-primary">Try again</a>
+                        </div>
+                    </div>
                 </body>
             </html>
             """,
@@ -856,15 +880,22 @@ async def test_interface(uid: str = Query("test_user_123"), dev: str = Query(Non
     """Development testing interface - hidden in production."""
     # Only show if dev parameter is provided
     if not dev or dev != "true":
-        return HTMLResponse(content="""
+        return HTMLResponse(content=f"""
         <html>
             <head>
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>Not Found</title>
+                <style>{get_mobile_css()}</style>
             </head>
-            <body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h1>404 - Page Not Found</h1>
-                <p><a href="/">Go to Homepage</a></p>
+            <body>
+                <div class="container">
+                    <div class="card" style="margin-top: 40px; padding: 40px 24px; text-align: center;">
+                        <h1 style="font-size: 48px; margin-bottom: 16px;">404</h1>
+                        <h2 style="border-bottom: none; padding-bottom: 0;">Page Not Found</h2>
+                        <p style="margin-bottom: 24px;">The page you're looking for doesn't exist.</p>
+                        <a href="/" class="btn btn-primary">Go to Homepage</a>
+                    </div>
+                </div>
             </body>
         </html>
         """, status_code=404)
@@ -876,25 +907,6 @@ async def test_interface(uid: str = Query("test_user_123"), dev: str = Query(Non
             <title>GitHub Issues - Test Interface</title>
             <style>
                 {get_mobile_css()}
-                .log {{
-                    background: #f7f9fa;
-                    border: 1px solid #e1e8ed;
-                    border-radius: 8px;
-                    padding: 15px;
-                    max-height: 300px;
-                    overflow-y: auto;
-                    font-family: 'Monaco', 'Courier New', monospace;
-                    font-size: 13px;
-                    margin-top: 15px;
-                }}
-                .log-entry {{
-                    padding: 5px 0;
-                    border-bottom: 1px solid #e1e8ed;
-                }}
-                .timestamp {{
-                    color: #657786;
-                    margin-right: 10px;
-                }}
             </style>
         </head>
         <body>
@@ -1071,7 +1083,7 @@ async def health_check():
 
 
 def get_mobile_css() -> str:
-    """Returns beautiful production-ready CSS styles."""
+    """Returns GitHub dark theme inspired CSS styles."""
     return """
         * {
             margin: 0;
@@ -1091,7 +1103,8 @@ def get_mobile_css() -> str:
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #0d1117;
+            color: #c9d1d9;
             min-height: 100vh;
             padding: 20px;
             line-height: 1.6;
@@ -1109,105 +1122,102 @@ def get_mobile_css() -> str:
             text-align: center;
             margin-bottom: 20px;
             animation: pulse 2s infinite;
-            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));
+            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5));
         }
         
         h1 {
-            color: white;
+            color: #c9d1d9;
             font-size: 32px;
-            font-weight: 700;
+            font-weight: 600;
             text-align: center;
             margin-bottom: 12px;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
         }
         
         h2 {
-            color: #24292e;
+            color: #c9d1d9;
             font-size: 24px;
             font-weight: 600;
             margin-bottom: 15px;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 10px;
         }
         
         h3 {
-            color: #24292e;
+            color: #c9d1d9;
             font-size: 19px;
             font-weight: 600;
             margin-bottom: 12px;
         }
         
         p {
-            color: white;
+            color: #8b949e;
             text-align: center;
             margin-bottom: 24px;
             font-size: 16px;
-            opacity: 0.95;
         }
         
         .username {
-            color: #ffd700;
+            color: #58a6ff;
             font-weight: 600;
             font-size: 18px;
         }
         
         .header-success {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #161b22;
             padding: 40px 24px;
-            border-radius: 20px;
+            border-radius: 6px;
             margin-bottom: 24px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid #30363d;
         }
         
         .card {
-            background: white;
-            border-radius: 16px;
+            background: #161b22;
+            border-radius: 6px;
             padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: 1px solid rgba(0,0,0,0.05);
+            margin-bottom: 16px;
+            border: 1px solid #30363d;
+            transition: border-color 0.2s;
         }
         
         .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            border-color: #58a6ff;
         }
         
         .btn {
             display: inline-block;
-            padding: 14px 28px;
-            border-radius: 12px;
+            padding: 9px 20px;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            font-size: 15px;
-            border: none;
+            font-weight: 500;
+            font-size: 14px;
+            border: 1px solid;
             cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.2s ease-in-out;
             margin: 8px 8px 8px 0;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             text-align: center;
+            line-height: 20px;
         }
         
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            background: #238636;
+            color: #ffffff;
+            border-color: #238636;
         }
         
         .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+            background: #2ea043;
+            border-color: #2ea043;
         }
         
         .btn-secondary {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-            box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4);
+            background: transparent;
+            color: #c9d1d9;
+            border-color: #30363d;
         }
         
         .btn-secondary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(240, 147, 251, 0.6);
+            background: #30363d;
+            border-color: #8b949e;
         }
         
         .btn-block {
@@ -1218,38 +1228,40 @@ def get_mobile_css() -> str:
         
         .repo-select {
             width: 100%;
-            padding: 14px 16px;
-            border: 2px solid #e1e8ed;
-            border-radius: 12px;
-            font-size: 15px;
+            padding: 9px 12px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            font-size: 14px;
             margin-bottom: 18px;
             font-family: inherit;
-            background: #f7f9fa;
+            background: #0d1117;
+            color: #c9d1d9;
             transition: all 0.2s;
             cursor: pointer;
         }
         
         .repo-select:focus {
             outline: none;
-            border-color: #667eea;
-            background: white;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
         }
         
         input[type="text"], textarea {
             width: 100%;
-            padding: 14px 16px;
-            border: 2px solid #e1e8ed;
-            border-radius: 12px;
-            font-size: 15px;
+            padding: 9px 12px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            font-size: 14px;
             font-family: inherit;
+            background: #0d1117;
+            color: #c9d1d9;
             transition: all 0.2s;
         }
         
         input[type="text"]:focus, textarea:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
         }
         
         textarea {
@@ -1265,28 +1277,26 @@ def get_mobile_css() -> str:
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
-            color: #24292e;
+            color: #c9d1d9;
             font-size: 14px;
         }
         
         .example {
-            background: linear-gradient(135deg, #f6f8fa 0%, #e9ecef 100%);
+            background: #161b22;
             padding: 16px 18px;
-            border-radius: 12px;
+            border-radius: 6px;
             margin: 12px 0;
             font-size: 14px;
             cursor: pointer;
-            border: 2px solid transparent;
-            color: #24292e;
-            transition: all 0.3s;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            transition: all 0.2s;
             line-height: 1.6;
         }
         
         .example:hover {
-            border-color: #667eea;
-            background: linear-gradient(135deg, #e8eaf6 0%, #d1c4e9 100%);
-            transform: translateX(4px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+            border-color: #58a6ff;
+            background: #21262d;
         }
         
         .steps {
@@ -1298,83 +1308,91 @@ def get_mobile_css() -> str:
             margin: 18px 0;
             align-items: flex-start;
             padding: 12px;
-            border-radius: 10px;
+            border-radius: 6px;
             transition: background 0.2s;
         }
         
         .step:hover {
-            background: #f8f9fa;
+            background: #21262d;
         }
         
         .step-number {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #238636;
             color: white;
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: bold;
+            font-weight: 600;
             margin-right: 14px;
             flex-shrink: 0;
-            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.3);
+            font-size: 14px;
         }
         
         .step-content {
             flex: 1;
-            padding-top: 6px;
-            font-size: 15px;
+            padding-top: 4px;
+            font-size: 14px;
             line-height: 1.6;
+            color: #8b949e;
+        }
+        
+        .step-content strong {
+            color: #c9d1d9;
         }
         
         .success-box {
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            color: #155724;
+            background: rgba(35, 134, 54, 0.15);
+            color: #3fb950;
             padding: 24px;
-            border-radius: 14px;
+            border-radius: 6px;
             margin: 18px 0;
             text-align: center;
-            border: 2px solid #28a745;
-            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.2);
+            border: 1px solid #238636;
         }
         
         .error-box {
-            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-            color: #721c24;
+            background: rgba(248, 81, 73, 0.15);
+            color: #f85149;
             padding: 18px;
-            border-radius: 14px;
+            border-radius: 6px;
             margin: 14px 0;
-            border: 2px solid #dc3545;
-            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2);
+            border: 1px solid #f85149;
         }
         
         .status {
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 6px;
             margin: 15px 0;
             font-weight: 500;
             display: none;
+            border: 1px solid;
         }
         
         .status.info {
-            background: #e8f5fe;
-            color: #0969da;
+            background: rgba(88, 166, 255, 0.15);
+            color: #58a6ff;
+            border-color: #1f6feb;
         }
         
         .status.recording {
-            background: #fff3cd;
-            color: #856404;
+            background: rgba(187, 128, 9, 0.15);
+            color: #d29922;
+            border-color: #9e6a03;
         }
         
         .status.success {
-            background: #d4edda;
-            color: #155724;
+            background: rgba(35, 134, 54, 0.15);
+            color: #3fb950;
+            border-color: #238636;
         }
         
         .status.error {
-            background: #f8d7da;
-            color: #721c24;
+            background: rgba(248, 81, 73, 0.15);
+            color: #f85149;
+            border-color: #f85149;
         }
         
         ul, ol {
@@ -1383,30 +1401,77 @@ def get_mobile_css() -> str:
         
         li {
             margin: 8px 0;
+            color: #8b949e;
         }
         
         strong {
-            color: #667eea;
+            color: #c9d1d9;
             font-weight: 600;
         }
         
         .footer {
             text-align: center;
-            color: rgba(255,255,255,0.7);
+            color: #8b949e;
             margin-top: 40px;
             padding: 20px;
             font-size: 14px;
+            border-top: 1px solid #21262d;
+        }
+        
+        .footer strong {
+            color: #58a6ff;
         }
         
         .footer a {
-            color: rgba(255,255,255,0.9);
+            color: #58a6ff;
             text-decoration: none;
-            font-weight: 500;
         }
         
         .footer a:hover {
-            color: white;
             text-decoration: underline;
+        }
+        
+        /* GitHub-style scrollbars */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #0d1117;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 6px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
+        
+        /* Log styles for test interface */
+        .log {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+            font-size: 12px;
+            margin-top: 15px;
+        }
+        
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #21262d;
+            color: #c9d1d9;
+        }
+        
+        .timestamp {
+            color: #8b949e;
+            margin-right: 10px;
         }
         
         @media (max-width: 480px) {
