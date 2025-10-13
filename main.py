@@ -213,16 +213,12 @@ async def root(uid: str = Query(None)):
         </head>
         <body>
             <div class="container">
-                <div class="header-success">
-                    <div class="icon">✨</div>
-                    <h1>All Set!</h1>
-                    <p class="username">@{github_username}</p>
-                    <p style="font-size: 15px; margin-top: 10px;">Your voice issues will be created automatically</p>
-                </div>
-                
-                <div class="card">
+                <div class="card" style="margin-top: 20px;">
                     <h2>📋 Target Repository</h2>
-                    <p style="text-align: left; font-size: 15px; margin-bottom: 16px;">
+                    <p style="text-align: left; font-size: 14px; margin-bottom: 8px; color: #8b949e;">
+                        Logged in as <span class="username">@{github_username}</span>
+                    </p>
+                    <p style="text-align: left; font-size: 14px; margin-bottom: 16px;">
                         Issues will be created in this repository:
                     </p>
                     
