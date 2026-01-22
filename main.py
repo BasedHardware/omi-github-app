@@ -1,99 +1,558 @@
+"""
+OMI GitHub Issues Integration - Chat Tools Based
+
+This app provides GitHub integration through OAuth2 authentication
+and chat tools for creating and managing GitHub issues.
+"""
+import sys
 from fastapi import FastAPI, Request, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import os
 from dotenv import load_dotenv
-from typing import List, Dict, Any
 import secrets
-import asyncio
 
-from simple_storage import SimpleUserStorage, SimpleSessionStorage
+from simple_storage import SimpleUserStorage
 from github_client import GitHubClient
-from issue_detector import IssueDetector
+from issue_detector import ai_select_labels
+from models import ChatToolResponse
 
 load_dotenv()
 
+
+def log(msg: str):
+    """Print and flush immediately for Railway logging."""
+    print(msg)
+    sys.stdout.flush()
+
+
 # Initialize services
 github_client = GitHubClient()
-issue_detector = IssueDetector()
 
 app = FastAPI(
     title="OMI GitHub Issues Integration",
-    description="Voice-activated GitHub issue creation via OMI",
-    version="1.0.0"
+    description="GitHub issue management via Omi chat tools",
+    version="2.0.0"
 )
 
 # Store OAuth states temporarily (in production, use Redis or similar)
 oauth_states = {}
 
-# Note: Removed background task - notifications only work through webhook responses
-# Idle sessions are now detected and processed on the next webhook call
 
-async def process_issue_creation(session_id: str, accumulated: str, segments_count: int, user: dict) -> str:
+# ============================================
+# Helper Functions
+# ============================================
+
+def get_repo_for_request(user: dict, repo_param: str = None) -> tuple[str, str]:
     """
-    Process accumulated text and create GitHub issue.
-    Returns status message.
+    Get repository for a request.
+    Returns (repo_full_name, error_message).
+    If error_message is not None, repo_full_name will be None.
     """
-    # AI generates title and description from all segments
-    title, description = await issue_detector.ai_generate_issue_from_segments(accumulated)
-    
-    # Check if AI determined this is not a valid issue
-    if not title or not description:
-        SimpleSessionStorage.reset_session(session_id)
-        print(f"🚫 AI determined this is not a valid issue - discarding", flush=True)
-        return "❌ Not a valid issue (accidental trigger)"
-    
-    print(f"✨ AI generated issue:", flush=True)
-    print(f"   Title: '{title}'", flush=True)
-    print(f"   Description: '{description[:100]}...'", flush=True)
-    
-    if len(title.strip()) > 3 and len(description.strip()) > 3:
-        # Fetch repo labels and let AI select appropriate ones
-        print(f"🏷️  Fetching repository labels...", flush=True)
-        repo_labels = github_client.get_repo_labels(
-            access_token=user["access_token"],
-            repo_full_name=user["selected_repo"]
-        )
-        
-        selected_labels = []
-        if repo_labels:
-            print(f"🏷️  Found {len(repo_labels)} labels, letting AI select...", flush=True)
-            selected_labels = await issue_detector.ai_select_labels(title, description, repo_labels)
-            if selected_labels:
-                print(f"🏷️  AI selected labels: {', '.join(selected_labels)}", flush=True)
-            else:
-                print(f"🏷️  No labels selected by AI", flush=True)
-        
-        print(f"📤 Creating GitHub issue...", flush=True)
-        
+    repo_full_name = repo_param or user.get("selected_repo")
+    if not repo_full_name:
+        return None, "No repository specified. Please set a default repository in settings or provide the 'repo' parameter (format: 'owner/repo')."
+    return repo_full_name, None
+
+
+# ============================================
+# Chat Tools Manifest
+# ============================================
+
+@app.get("/.well-known/omi-tools.json")
+async def get_omi_tools_manifest():
+    """
+    Omi Chat Tools Manifest endpoint.
+
+    This endpoint returns the chat tools definitions that Omi will fetch
+    when the app is created or updated in the Omi App Store.
+    """
+    return {
+        "tools": [
+            {
+                "name": "create_issue",
+                "description": "Create a GitHub issue in a repository. Use this when the user wants to report a bug, request a feature, create a ticket, or log feedback. The issue will be created in the user's default repository unless a different repo is specified.",
+                "endpoint": "/tools/create_issue",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "The issue title. Required. Keep it concise and descriptive (under 100 characters)."
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "The issue description/body. Supports markdown formatting. Include relevant details like steps to reproduce, expected behavior, etc."
+                        },
+                        "labels": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Labels to apply to the issue. If provided, must exactly match labels that exist in the repository."
+                        },
+                        "auto_labels": {
+                            "type": "boolean",
+                            "description": "If true (default), use AI to automatically select appropriate labels from the repository's available labels based on the issue content."
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository to create the issue in (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        }
+                    },
+                    "required": ["title"]
+                },
+                "auth_required": True,
+                "status_message": "Creating GitHub issue..."
+            },
+            {
+                "name": "list_repos",
+                "description": "List the user's GitHub repositories. Use this when the user wants to see their repos, check which repositories they can create issues in, or find a repository name.",
+                "endpoint": "/tools/list_repos",
+                "method": "POST",
+                "parameters": {
+                    "properties": {},
+                    "required": []
+                },
+                "auth_required": True,
+                "status_message": "Getting your repositories..."
+            },
+            {
+                "name": "list_issues",
+                "description": "List recent issues in a GitHub repository. Use this when the user wants to see issues, check open bugs, view recent tickets, or find an issue number.",
+                "endpoint": "/tools/list_issues",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository to list issues from (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        },
+                        "state": {
+                            "type": "string",
+                            "enum": ["open", "closed", "all"],
+                            "description": "Filter by issue state. Defaults to 'open'."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of issues to return (default: 10, max: 50)"
+                        }
+                    },
+                    "required": []
+                },
+                "auth_required": True,
+                "status_message": "Getting issues..."
+            },
+            {
+                "name": "get_issue",
+                "description": "Get details of a specific GitHub issue including title, body, labels, assignees, and state. Use this when the user wants to see issue details, check an issue's status, or read the full description.",
+                "endpoint": "/tools/get_issue",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "issue_number": {
+                            "type": "integer",
+                            "description": "The issue number to get details for. Required."
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository the issue is in (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        }
+                    },
+                    "required": ["issue_number"]
+                },
+                "auth_required": True,
+                "status_message": "Getting issue details..."
+            },
+            {
+                "name": "list_labels",
+                "description": "List available labels in a GitHub repository. Use this when the user wants to see what labels they can use, check available tags, or find the correct label name.",
+                "endpoint": "/tools/list_labels",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository to list labels from (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        }
+                    },
+                    "required": []
+                },
+                "auth_required": True,
+                "status_message": "Getting repository labels..."
+            },
+            {
+                "name": "add_comment",
+                "description": "Add a comment to an existing GitHub issue. Use this when the user wants to comment on an issue, add information, or respond to a bug report.",
+                "endpoint": "/tools/add_comment",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "issue_number": {
+                            "type": "integer",
+                            "description": "The issue number to comment on. Required."
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "The comment text. Required. Supports markdown formatting."
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository the issue is in (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        }
+                    },
+                    "required": ["issue_number", "body"]
+                },
+                "auth_required": True,
+                "status_message": "Adding comment..."
+            }
+        ]
+    }
+
+
+# ============================================
+# Chat Tool Endpoints
+# ============================================
+
+@app.post("/tools/create_issue", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_create_issue(request: Request):
+    """
+    Create a GitHub issue.
+    Chat tool for Omi - creates an issue in the specified or default repository.
+    """
+    try:
+        body = await request.json()
+        log(f"=== CREATE_ISSUE START ===")
+        log(f"Request: {body}")
+
+        uid = body.get("uid")
+        title = body.get("title")
+        issue_body = body.get("body", "")
+        labels = body.get("labels", [])
+        auto_labels = body.get("auto_labels", True)
+        repo = body.get("repo")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        if not title:
+            return ChatToolResponse(error="Issue title is required")
+
+        # Get user and validate auth
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        # Determine repository
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        access_token = user["access_token"]
+
+        # Auto-select labels if enabled and no labels provided
+        if auto_labels and not labels:
+            repo_labels = github_client.get_repo_labels(access_token, repo_full_name)
+            if repo_labels:
+                log(f"Found {len(repo_labels)} labels, running AI selection...")
+                labels = await ai_select_labels(title, issue_body or "", repo_labels)
+                if labels:
+                    log(f"AI selected labels: {labels}")
+
+        # Add footer to issue body
+        footer = "\n\n---\n*Created via Omi*"
+        full_body = (issue_body + footer) if issue_body else footer.strip()
+
+        # Create the issue
         result = await github_client.create_issue(
-            access_token=user["access_token"],
-            repo_full_name=user["selected_repo"],
+            access_token=access_token,
+            repo_full_name=repo_full_name,
             title=title,
-            body=description,
-            labels=selected_labels
+            body=full_body,
+            labels=labels
         )
-        
+
         if result and result.get("success"):
-            SimpleSessionStorage.reset_session(session_id)
-            issue_url = result.get('issue_url')
-            issue_number = result.get('issue_number')
-            print(f"🎉 SUCCESS! Issue #{issue_number}: {issue_url}", flush=True)
-            return f"✅ Issue created: #{issue_number} - {title}\n{issue_url}"
+            issue_url = result.get("issue_url")
+            issue_number = result.get("issue_number")
+
+            result_parts = [
+                "**Issue Created!**",
+                "",
+                f"**#{issue_number}** - {title}",
+                f"Repository: {repo_full_name}",
+            ]
+            if labels:
+                result_parts.append(f"Labels: {', '.join(labels)}")
+            result_parts.append(f"URL: {issue_url}")
+
+            log(f"SUCCESS: Issue #{issue_number} created")
+            return ChatToolResponse(result="\n".join(result_parts))
         else:
-            error = result.get("error", "Unknown") if result else "Failed"
-            SimpleSessionStorage.reset_session(session_id)
-            print(f"❌ FAILED: {error}", flush=True)
-            return f"❌ Failed: {error}"
-    else:
-        SimpleSessionStorage.reset_session(session_id)
-        print(f"⚠️  AI returned invalid issue", flush=True)
-        return "❌ No valid issue content"
+            error = result.get("error", "Unknown error") if result else "Failed"
+            log(f"ERROR: {error}")
+            return ChatToolResponse(error=f"Failed to create issue: {error}")
 
-@app.on_event("startup")
-async def startup_event():
-    """App startup - all initialization complete."""
-    print("🔄 App started - idle sessions processed on webhook calls", flush=True)
+    except Exception as e:
+        import traceback
+        log(f"EXCEPTION: {e}")
+        log(traceback.format_exc())
+        return ChatToolResponse(error=f"Failed to create issue: {str(e)}")
 
+
+@app.post("/tools/list_repos", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_list_repos(request: Request):
+    """
+    List user's GitHub repositories.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repos = user.get("available_repos", [])
+        if not repos:
+            # Fetch fresh if not cached
+            repos = github_client.list_user_repos(user["access_token"])
+
+        if not repos:
+            return ChatToolResponse(result="You don't have any repositories on GitHub.")
+
+        default_repo = user.get("selected_repo", "")
+
+        result_parts = [f"**Your GitHub Repositories ({len(repos)})**", ""]
+        for i, repo in enumerate(repos[:20], 1):  # Limit to 20
+            privacy = "Private" if repo.get("private") else "Public"
+            default_marker = " (default)" if repo["full_name"] == default_repo else ""
+            result_parts.append(f"{i}. **{repo['full_name']}**{default_marker} - {privacy}")
+
+        if len(repos) > 20:
+            result_parts.append(f"\n... and {len(repos) - 20} more repositories")
+
+        return ChatToolResponse(result="\n".join(result_parts))
+
+    except Exception as e:
+        log(f"Error listing repos: {e}")
+        return ChatToolResponse(error=f"Failed to list repositories: {str(e)}")
+
+
+@app.post("/tools/list_issues", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_list_issues(request: Request):
+    """
+    List issues in a GitHub repository.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        repo = body.get("repo")
+        state = body.get("state", "open")
+        limit = min(body.get("limit", 10), 50)
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        issues = github_client.list_issues(
+            access_token=user["access_token"],
+            repo_full_name=repo_full_name,
+            state=state,
+            per_page=limit
+        )
+
+        if not issues:
+            return ChatToolResponse(result=f"No {state} issues found in {repo_full_name}.")
+
+        result_parts = [f"**{state.title()} Issues in {repo_full_name} ({len(issues)})**", ""]
+        for issue in issues:
+            labels_str = f" [{', '.join(issue['labels'])}]" if issue.get('labels') else ""
+            result_parts.append(f"• **#{issue['number']}** - {issue['title']}{labels_str}")
+
+        return ChatToolResponse(result="\n".join(result_parts))
+
+    except Exception as e:
+        log(f"Error listing issues: {e}")
+        return ChatToolResponse(error=f"Failed to list issues: {str(e)}")
+
+
+@app.post("/tools/get_issue", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_get_issue(request: Request):
+    """
+    Get details of a specific GitHub issue.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        issue_number = body.get("issue_number")
+        repo = body.get("repo")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        if not issue_number:
+            return ChatToolResponse(error="Issue number is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        issue = github_client.get_issue(
+            access_token=user["access_token"],
+            repo_full_name=repo_full_name,
+            issue_number=int(issue_number)
+        )
+
+        if not issue:
+            return ChatToolResponse(error=f"Issue #{issue_number} not found in {repo_full_name}")
+
+        result_parts = [
+            f"**Issue #{issue['number']}** - {issue['state'].upper()}",
+            "",
+            f"**{issue['title']}**",
+            "",
+        ]
+
+        if issue.get('body'):
+            # Truncate long bodies
+            body_preview = issue['body'][:500]
+            if len(issue['body']) > 500:
+                body_preview += "..."
+            result_parts.append(body_preview)
+            result_parts.append("")
+
+        if issue.get('labels'):
+            result_parts.append(f"**Labels:** {', '.join(issue['labels'])}")
+        if issue.get('assignees'):
+            result_parts.append(f"**Assignees:** {', '.join(issue['assignees'])}")
+        result_parts.append(f"**Created by:** {issue.get('user', 'Unknown')}")
+        result_parts.append(f"**Comments:** {issue.get('comments', 0)}")
+        result_parts.append(f"**URL:** {issue['url']}")
+
+        return ChatToolResponse(result="\n".join(result_parts))
+
+    except Exception as e:
+        log(f"Error getting issue: {e}")
+        return ChatToolResponse(error=f"Failed to get issue: {str(e)}")
+
+
+@app.post("/tools/list_labels", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_list_labels(request: Request):
+    """
+    List available labels in a repository.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        repo = body.get("repo")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        labels = github_client.get_repo_labels_with_details(
+            access_token=user["access_token"],
+            repo_full_name=repo_full_name
+        )
+
+        if not labels:
+            return ChatToolResponse(result=f"No labels found in {repo_full_name}.")
+
+        result_parts = [f"**Labels in {repo_full_name} ({len(labels)})**", ""]
+        for label in labels:
+            desc = f" - {label['description']}" if label.get('description') else ""
+            result_parts.append(f"• **{label['name']}**{desc}")
+
+        return ChatToolResponse(result="\n".join(result_parts))
+
+    except Exception as e:
+        log(f"Error listing labels: {e}")
+        return ChatToolResponse(error=f"Failed to list labels: {str(e)}")
+
+
+@app.post("/tools/add_comment", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_add_comment(request: Request):
+    """
+    Add a comment to a GitHub issue.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        issue_number = body.get("issue_number")
+        comment_body = body.get("body")
+        repo = body.get("repo")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        if not issue_number:
+            return ChatToolResponse(error="Issue number is required")
+
+        if not comment_body:
+            return ChatToolResponse(error="Comment body is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        result = github_client.add_issue_comment(
+            access_token=user["access_token"],
+            repo_full_name=repo_full_name,
+            issue_number=int(issue_number),
+            body=comment_body
+        )
+
+        if result and result.get("success"):
+            return ChatToolResponse(
+                result=f"**Comment Added**\n\nAdded comment to issue #{issue_number} in {repo_full_name}"
+            )
+        else:
+            error = result.get("error", "Unknown error") if result else "Failed"
+            return ChatToolResponse(error=f"Failed to add comment: {error}")
+
+    except Exception as e:
+        log(f"Error adding comment: {e}")
+        return ChatToolResponse(error=f"Failed to add comment: {str(e)}")
+
+
+# ============================================
+# OAuth & Setup Endpoints
+# ============================================
 
 @app.get("/")
 async def root(uid: str = Query(None)):
@@ -101,18 +560,18 @@ async def root(uid: str = Query(None)):
     if not uid:
         return {
             "app": "OMI GitHub Issues Integration",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "status": "active",
             "endpoints": {
                 "auth": "/auth?uid=<user_id>",
-                "webhook": "/webhook?session_id=<session>&uid=<user_id>",
-                "setup_check": "/setup-completed?uid=<user_id>"
+                "setup_check": "/setup-completed?uid=<user_id>",
+                "tools_manifest": "/.well-known/omi-tools.json"
             }
         }
-    
+
     # Get user info
     user = SimpleUserStorage.get_user(uid)
-    
+
     if not user or not user.get("access_token"):
         # Not authenticated - show auth page
         auth_url = f"/auth?uid={uid}"
@@ -126,16 +585,16 @@ async def root(uid: str = Query(None)):
             </head>
             <body>
                 <div class="container">
-                    <div class="icon">🎤→📝</div>
-                    <h1>Voice to GitHub Issues</h1>
-                    <p style="font-size: 18px;">Transform your voice into perfectly formatted GitHub issues</p>
-                    
+                    <div class="icon">🐙</div>
+                    <h1>GitHub Issues</h1>
+                    <p style="font-size: 18px;">Create and manage GitHub issues through Omi chat</p>
+
                     <a href="{auth_url}" class="btn btn-primary btn-block" style="font-size: 17px; padding: 16px;">
-                        🔐 Connect GitHub Account
+                        Connect GitHub Account
                     </a>
-                    
+
                     <div class="card">
-                        <h3>✨ How It Works</h3>
+                        <h3>How It Works</h3>
                         <div class="steps">
                             <div class="step">
                                 <div class="step-number">1</div>
@@ -146,62 +605,55 @@ async def root(uid: str = Query(None)):
                             <div class="step">
                                 <div class="step-number">2</div>
                                 <div class="step-content">
-                                    <strong>Select</strong> the repository for your issues
+                                    <strong>Select</strong> your default repository
                                 </div>
                             </div>
                             <div class="step">
                                 <div class="step-number">3</div>
                                 <div class="step-content">
-                                    <strong>Speak</strong> naturally to describe your issue
-                                </div>
-                            </div>
-                            <div class="step">
-                                <div class="step-number">4</div>
-                                <div class="step-content">
-                                    <strong>Done!</strong> AI creates a professional GitHub issue
+                                    <strong>Chat</strong> with Omi to create and manage issues
                                 </div>
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="card">
-                        <h3>🎯 Features</h3>
+                        <h3>What You Can Do</h3>
                         <ul style="list-style: none; padding: 0;">
                             <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
-                                <strong>🤖 AI-Powered</strong> - Intelligent formatting and error correction
+                                <strong>Create Issues</strong> - Report bugs, request features
                             </li>
                             <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
-                                <strong>🏷️ Smart Labels</strong> - Automatically assigns relevant tags
+                                <strong>List Issues</strong> - View open/closed issues
                             </li>
                             <li style="padding: 10px 0; border-bottom: 1px solid #21262d;">
-                                <strong>⚡ Fast</strong> - Issues created in seconds
+                                <strong>Add Comments</strong> - Respond to issues
                             </li>
                             <li style="padding: 10px 0;">
-                                <strong>🔒 Secure</strong> - OAuth 2.0 authentication
+                                <strong>Auto-Labels</strong> - AI selects appropriate tags
                             </li>
                         </ul>
                     </div>
-                    
+
                     <div class="footer">
-                        <p>Powered by <strong>Omi</strong> × <strong>AI</strong></p>
-                        <p style="font-size: 13px; margin-top: 8px;">Intelligent voice-to-issue platform</p>
+                        <p>Powered by <strong>Omi</strong></p>
                     </div>
                 </div>
             </body>
         </html>
         """)
-    
+
     # Authenticated - show repo selection page
     repos = user.get("available_repos", [])
     selected_repo = user.get("selected_repo", "")
     github_username = user.get("github_username", "Unknown")
-    
+
     repo_options = ""
     for repo in repos:
         selected_attr = 'selected' if repo['full_name'] == selected_repo else ''
-        privacy = "🔒" if repo.get('private') else "🌐"
-        repo_options += f'<option value="{repo["full_name"]}" {selected_attr}>{privacy} {repo["full_name"]}</option>'
-    
+        privacy = "Private" if repo.get('private') else "Public"
+        repo_options += f'<option value="{repo["full_name"]}" {selected_attr}>{repo["full_name"]} ({privacy})</option>'
+
     return HTMLResponse(content=f"""
     <html>
         <head>
@@ -214,122 +666,107 @@ async def root(uid: str = Query(None)):
         <body>
             <div class="container">
                 <div class="card" style="margin-top: 20px;">
-                    <h2>📋 Target Repository</h2>
+                    <h2>Default Repository</h2>
                     <p style="text-align: left; font-size: 14px; margin-bottom: 8px; color: #8b949e;">
                         Logged in as <span class="username">@{github_username}</span>
                     </p>
                     <p style="text-align: left; font-size: 14px; margin-bottom: 16px;">
-                        Issues will be created in this repository:
+                        Issues will be created here by default:
                     </p>
-                    
+
                     <select id="repoSelect" class="repo-select">
                         {repo_options if repo_options else '<option>No repositories found</option>'}
                     </select>
-                    
+
                     <button class="btn btn-primary btn-block" onclick="updateRepo()">
-                        💾 Save Repository
+                        Save Repository
                     </button>
                     <button class="btn btn-secondary btn-block" onclick="refreshRepos()">
-                        🔄 Refresh Repositories
+                        Refresh Repositories
                     </button>
                 </div>
-                
+
                 <div class="card">
-                    <h3>🎤 Using Voice Commands</h3>
+                    <h3>Using Chat Commands</h3>
                     <p style="text-align: left; margin-bottom: 16px;">
-                        Simply speak to your OMI device:
+                        Just chat with Omi naturally:
                     </p>
-                    <div class="steps">
-                        <div class="step">
-                            <div class="step-number">1</div>
-                            <div class="step-content">
-                                Say any trigger phrase like <strong>"Bug Report"</strong> or <strong>"Create Issue"</strong>
-                            </div>
-                        </div>
-                        <div class="step">
-                            <div class="step-number">2</div>
-                            <div class="step-content">
-                                Describe your issue naturally - AI handles the rest
-                            </div>
-                        </div>
-                        <div class="step">
-                            <div class="step-number">3</div>
-                            <div class="step-content">
-                                Receive a notification with your new issue link
-                            </div>
-                        </div>
+                    <div class="example">
+                        "Create an issue for the login bug"
+                    </div>
+                    <div class="example">
+                        "Show me recent issues"
+                    </div>
+                    <div class="example">
+                        "Add a comment to issue #42"
                     </div>
                 </div>
-                
+
                 <div class="card">
-                    <h3>💡 Pro Tips</h3>
+                    <h3>Tips</h3>
                     <ul style="list-style: none; padding: 0;">
                         <li style="padding: 8px 0;">
-                            🎯 <strong>Be specific</strong> - Mention device, steps, or expected behavior
+                            <strong>Be specific</strong> - Include details in issue descriptions
                         </li>
                         <li style="padding: 8px 0;">
-                            🗣️ <strong>Speak naturally</strong> - AI corrects transcription errors
+                            <strong>Auto-labels</strong> - AI picks relevant labels automatically
                         </li>
                         <li style="padding: 8px 0;">
-                            📊 <strong>Any length works</strong> - Quick or detailed, both work great
-                        </li>
-                        <li style="padding: 8px 0;">
-                            🏷️ <strong>Auto-labeled</strong> - Smart tags applied automatically
+                            <strong>Different repos</strong> - Specify repo name to override default
                         </li>
                     </ul>
                 </div>
-                
+
                 <div class="footer">
-                    <p>Powered by <strong>Omi</strong> × <strong>AI</strong></p>
-                    <p style="font-size: 13px; margin-top: 8px;">Voice-activated issue tracking for modern teams</p>
+                    <p>Powered by <strong>Omi</strong></p>
                 </div>
             </div>
-            
+
             <script>
                 async function updateRepo() {{
                     const select = document.getElementById('repoSelect');
                     const repo = select.value;
-                    
+
                     if (!repo || repo === 'No repositories found') {{
                         alert('Please select a valid repository');
                         return;
                     }}
-                    
+
                     try {{
                         const response = await fetch('/update-repo?uid={uid}&repo=' + encodeURIComponent(repo), {{
                             method: 'POST'
                         }});
-                        
+
                         const data = await response.json();
-                        
+
                         if (data.success) {{
-                            alert('✅ Repository updated successfully!');
+                            alert('Repository updated successfully!');
                         }} else {{
-                            alert('❌ Failed to update: ' + data.error);
+                            alert('Failed to update: ' + data.error);
                         }}
                     }} catch (error) {{
-                        alert('❌ Error: ' + error.message);
+                        alert('Error: ' + error.message);
                     }}
                 }}
-                
+
                 async function refreshRepos() {{
                     if (!confirm('Refresh your repository list from GitHub?')) return;
-                    
+
                     try {{
                         const response = await fetch('/refresh-repos?uid={uid}', {{
                             method: 'POST'
                         }});
-                        
+
                         const data = await response.json();
-                        
+
                         if (data.success) {{
-                            alert('✅ Repositories refreshed! Reloading page...');
+                            alert('Repositories refreshed! Reloading page...');
                             window.location.reload();
                         }} else {{
-                            alert('❌ Failed to refresh: ' + data.error);
+                            alert('Failed to refresh: ' + data.error);
                         }}
                     }} catch (error) {{
-                        alert('❌ Error: ' + error.message);
+                        alert('Error: ' + error.message);
                     }}
                 }}
             </script>
@@ -342,15 +779,15 @@ async def root(uid: str = Query(None)):
 async def auth_start(uid: str = Query(..., description="User ID from OMI")):
     """Start OAuth flow for GitHub authentication."""
     redirect_uri = os.getenv("OAUTH_REDIRECT_URL", "http://localhost:8000/auth/callback")
-    
+
     try:
         # Generate state parameter for CSRF protection
         state = secrets.token_urlsafe(32)
         oauth_states[state] = uid
-        
+
         # Get authorization URL
         auth_url = github_client.get_authorization_url(redirect_uri, state)
-        
+
         return RedirectResponse(url=auth_url)
     except Exception as e:
         import traceback
@@ -376,7 +813,7 @@ async def auth_callback(
                 <body>
                     <div class="container">
                         <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
-                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Authentication Failed</h2>
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">Authentication Failed</h2>
                             <p style="margin-bottom: 0;">Authorization code not received. Please try again.</p>
                         </div>
                     </div>
@@ -385,7 +822,7 @@ async def auth_callback(
             """,
             status_code=400
         )
-    
+
     # Verify state and get uid
     uid = oauth_states.get(state)
     if not uid:
@@ -399,7 +836,7 @@ async def auth_callback(
                 <body>
                     <div class="container">
                         <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
-                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Invalid State</h2>
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">Invalid State</h2>
                             <p style="margin-bottom: 0;">OAuth state mismatch. Please try again.</p>
                         </div>
                     </div>
@@ -408,19 +845,19 @@ async def auth_callback(
             """,
             status_code=400
         )
-    
+
     try:
         # Exchange code for access token
         token_data = github_client.exchange_code_for_token(code)
         access_token = token_data.get("access_token")
-        
+
         # Get user info
         user_info = github_client.get_user_info(access_token)
         github_username = user_info.get("login", "Unknown")
-        
+
         # Get user's repositories
         repos = github_client.list_user_repos(access_token)
-        
+
         # Save user data
         SimpleUserStorage.save_user(
             uid=uid,
@@ -429,11 +866,11 @@ async def auth_callback(
             selected_repo=repos[0]["full_name"] if repos else None,
             available_repos=repos
         )
-        
+
         # Clean up state
         if state in oauth_states:
             del oauth_states[state]
-        
+
         return HTMLResponse(
             content=f"""
             <html>
@@ -447,7 +884,7 @@ async def auth_callback(
                 <body>
                     <div class="container">
                         <div class="success-box" style="padding: 40px 24px;">
-                            <div class="icon" style="font-size: 72px; animation: pulse 1.5s infinite;">🎉</div>
+                            <div class="icon" style="font-size: 72px;">🎉</div>
                             <h2 style="font-size: 28px; margin: 16px 0;">Successfully Connected!</h2>
                             <p style="font-size: 17px; margin: 12px 0;">
                                 Your GitHub account <strong>@{github_username}</strong> is now linked
@@ -456,19 +893,19 @@ async def auth_callback(
                                 Found <strong>{len(repos)}</strong> {('repository' if len(repos) == 1 else 'repositories')}
                             </p>
                         </div>
-                        
+
                         <a href="/?uid={uid}" class="btn btn-primary btn-block" style="font-size: 17px; padding: 16px; margin-top: 24px;">
-                            Continue to Settings →
+                            Continue to Settings
                         </a>
-                        
+
                         <div class="card" style="margin-top: 20px; text-align: center;">
-                            <h3 style="margin-bottom: 16px;">🎤 Ready to Go!</h3>
+                            <h3>Ready to Go!</h3>
                             <p style="font-size: 16px; line-height: 1.8;">
-                                You can now create GitHub issues just by speaking to your OMI device.
+                                You can now manage GitHub issues by chatting with Omi.
                                 <br><br>
                                 Try saying:<br>
-                                <strong style="font-size: 17px;">"Bug Report"</strong> or 
-                                <strong style="font-size: 17px;">"Create Issue"</strong>
+                                <strong>"Create an issue for..."</strong> or
+                                <strong>"Show me open issues"</strong>
                             </p>
                         </div>
                     </div>
@@ -476,7 +913,7 @@ async def auth_callback(
             </html>
             """
         )
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -490,7 +927,7 @@ async def auth_callback(
                 <body>
                     <div class="container">
                         <div class="error-box" style="margin-top: 40px; padding: 40px 24px;">
-                            <h2 style="font-size: 24px; margin-bottom: 12px;">❌ Authentication Error</h2>
+                            <h2 style="font-size: 24px; margin-bottom: 12px;">Authentication Error</h2>
                             <p style="margin-bottom: 16px;">Failed to complete authentication: {str(e)}</p>
                             <a href="/auth?uid={uid}" class="btn btn-primary">Try again</a>
                         </div>
@@ -507,7 +944,7 @@ async def check_setup(uid: str = Query(..., description="User ID from OMI")):
     """Check if user has completed setup (authenticated with GitHub)."""
     is_authenticated = SimpleUserStorage.is_authenticated(uid)
     has_repo = SimpleUserStorage.has_selected_repo(uid)
-    
+
     return {
         "is_setup_completed": is_authenticated and has_repo
     }
@@ -536,10 +973,10 @@ async def refresh_repos(uid: str = Query(...)):
         user = SimpleUserStorage.get_user(uid)
         if not user or not user.get("access_token"):
             return {"success": False, "error": "User not authenticated"}
-        
+
         # Fetch fresh repo list
         repos = github_client.list_user_repos(user["access_token"])
-        
+
         # Update storage
         SimpleUserStorage.save_user(
             uid=uid,
@@ -548,528 +985,10 @@ async def refresh_repos(uid: str = Query(...)):
             selected_repo=user.get("selected_repo"),
             available_repos=repos
         )
-        
+
         return {"success": True, "repos_count": len(repos)}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
-@app.post("/webhook")
-async def webhook(
-    request: Request,
-    uid: str = Query(..., description="User ID from OMI"),
-    session_id: str = Query(None, description="Session ID from OMI (optional)")
-):
-    """
-    Real-time transcript webhook endpoint.
-    Collects 5 segments for detailed issue description.
-    """
-    # Use consistent session_id per user
-    if not session_id:
-        session_id = f"omi_session_{uid}"
-    
-    # Get user
-    user = SimpleUserStorage.get_user(uid)
-    
-    if not user or not user.get("access_token"):
-        return JSONResponse(
-            content={
-                "message": "User not authenticated. Please complete setup first.",
-                "setup_required": True
-            },
-            status_code=401
-        )
-    
-    if not user.get("selected_repo"):
-        return JSONResponse(
-            content={
-                "message": "No repository selected. Please select a repository in settings.",
-                "setup_required": True
-            },
-            status_code=400
-        )
-    
-    # Parse payload from OMI
-    try:
-        payload = await request.json()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
-    
-    # Handle both formats
-    segments = []
-    if isinstance(payload, dict):
-        segments = payload.get("segments", [])
-        if not session_id and "session_id" in payload:
-            session_id = payload["session_id"]
-    elif isinstance(payload, list):
-        segments = payload
-    
-    # Log received data
-    print(f"📥 Received {len(segments) if segments else 0} segment(s) from OMI", flush=True)
-    if segments:
-        for i, seg in enumerate(segments[:3]):
-            text = seg.get('text', 'NO TEXT') if isinstance(seg, dict) else str(seg)
-            print(f"   Segment {i}: {text[:100]}", flush=True)
-    
-    if not segments or not isinstance(segments, list):
-        return {"status": "ok"}
-    
-    # Ensure consistent session_id
-    if not session_id:
-        session_id = f"omi_session_{uid}"
-    
-    # Get or create session
-    session = SimpleSessionStorage.get_or_create_session(session_id, uid)
-    
-    # Debug session state
-    print(f"📊 Session state: mode={session.get('issue_mode')}, count={session.get('segments_count', 0)}", flush=True)
-    
-    # Check if there's an idle recording session that should be processed
-    # This ensures we send notifications even after timeout
-    if session.get("issue_mode") == "recording":
-        segments_count = session.get("segments_count", 0)
-        accumulated = session.get("accumulated_text", "")
-        idle_time = SimpleSessionStorage.get_session_idle_time(session_id)
-        
-        # If user has been silent for 5+ seconds and we have minimum segments, process now!
-        if idle_time and idle_time > 5 and segments_count >= 3:
-            print(f"⏱️  Timeout detected on webhook: {idle_time:.1f}s idle, {segments_count} segments", flush=True)
-            SimpleSessionStorage.update_session(
-                session_id,
-                issue_mode="processing"
-            )
-            # Process and return notification
-            result_message = await process_issue_creation(session_id, accumulated, segments_count, user)
-            if result_message and ("✅ Issue created:" in result_message or "❌" in result_message):
-                print(f"✉️  TIMEOUT NOTIFICATION: {result_message}", flush=True)
-                return {
-                    "message": result_message,
-                    "session_id": session_id,
-                    "processed_segments": segments_count
-                }
-    
-    # Process segments normally
-    response_message = await process_segments(session, segments, user)
-    
-    # Only send notifications for final issue creation
-    if response_message and ("✅ Issue created:" in response_message or "❌ Failed:" in response_message):
-        print(f"✉️  USER NOTIFICATION: {response_message}", flush=True)
-        return {
-            "message": response_message,
-            "session_id": session_id,
-            "processed_segments": len(segments)
-        }
-    
-    # Silent response during collection
-    print(f"🔇 Silent response: {response_message}", flush=True)
-    return {"status": "ok"}
-
-
-async def process_segments(
-    session: dict,
-    segments: List[Dict[str, Any]],
-    user: dict
-) -> str:
-    """
-    Collect exactly 5 segments after 'Feedback Post', then AI generates issue.
-    - Segment 1: Contains "Feedback Post" + start of description
-    - Segments 2-5: Continued detailed description
-    - AI generates title and description
-    
-    For test interface: processes the entire text immediately as all 5 segments.
-    """
-    # Extract text from segments
-    segment_texts = [seg.get("text", "") for seg in segments]
-    full_text = " ".join(segment_texts)
-    
-    session_id = session["session_id"]
-    is_test_session = session_id.startswith("test_session")
-    
-    print(f"🔍 Received: '{full_text}'", flush=True)
-    print(f"📊 Session mode: {session['issue_mode']}, Count: {session.get('segments_count', 0)}/5", flush=True)
-    
-    # Check for trigger phrase (but only if not already recording)
-    if issue_detector.detect_trigger(full_text) and session["issue_mode"] == "idle":
-        issue_content = issue_detector.extract_issue_content(full_text)
-        
-        print(f"🎤 TRIGGER! {'[TEST MODE] Processing immediately...' if is_test_session else 'Starting segment collection...'}", flush=True)
-        print(f"   Content: '{issue_content}'", flush=True)
-        
-        # TEST MODE: Process entire text immediately
-        if is_test_session and len(issue_content) > 20:
-            print(f"🧪 Test mode: Processing full text as all 5 segments...", flush=True)
-            
-            # AI generates title and description from full text
-            title, description = await issue_detector.ai_generate_issue_from_segments(issue_content)
-            
-            # Check if AI determined this is not a valid issue
-            if not title or not description:
-                SimpleSessionStorage.reset_session(session_id)
-                print(f"🚫 AI determined this is not a valid issue - discarding", flush=True)
-                return "❌ Not a valid issue (accidental trigger)"
-            
-            print(f"✨ AI generated issue:", flush=True)
-            print(f"   Title: '{title}'", flush=True)
-            print(f"   Description: '{description[:100]}...'", flush=True)
-            
-            if len(title.strip()) > 3 and len(description.strip()) > 3:
-                # Fetch repo labels and let AI select appropriate ones
-                print(f"🏷️  Fetching repository labels...", flush=True)
-                repo_labels = github_client.get_repo_labels(
-                    access_token=user["access_token"],
-                    repo_full_name=user["selected_repo"]
-                )
-                
-                selected_labels = []
-                if repo_labels:
-                    print(f"🏷️  Found {len(repo_labels)} labels, letting AI select...", flush=True)
-                    selected_labels = await issue_detector.ai_select_labels(title, description, repo_labels)
-                    if selected_labels:
-                        print(f"🏷️  AI selected labels: {', '.join(selected_labels)}", flush=True)
-                    else:
-                        print(f"🏷️  No labels selected by AI", flush=True)
-                
-                print(f"📤 Creating GitHub issue...", flush=True)
-                
-                result = await github_client.create_issue(
-                    access_token=user["access_token"],
-                    repo_full_name=user["selected_repo"],
-                    title=title,
-                    body=description,
-                    labels=selected_labels
-                )
-                
-                if result and result.get("success"):
-                    SimpleSessionStorage.reset_session(session_id)
-                    issue_url = result.get('issue_url')
-                    issue_number = result.get('issue_number')
-                    print(f"🎉 SUCCESS! Issue #{issue_number}: {issue_url}", flush=True)
-                    return f"✅ Issue created: #{issue_number} - {title}\n{issue_url}"
-                else:
-                    error = result.get("error", "Unknown") if result else "Failed"
-                    SimpleSessionStorage.reset_session(session_id)
-                    print(f"❌ FAILED: {error}", flush=True)
-                    return f"❌ Failed: {error}"
-            else:
-                SimpleSessionStorage.reset_session(session_id)
-                print(f"⚠️  AI returned invalid issue", flush=True)
-                return "❌ No valid issue content"
-        
-        # REAL MODE: Start collecting segments (for actual OMI device)
-        SimpleSessionStorage.update_session(
-            session_id,
-            issue_mode="recording",
-            accumulated_text=issue_content or full_text,
-            segments_count=1
-        )
-        
-        return "collecting_1"
-    
-    # If in recording mode, collect more segments (intelligent dynamic collection)
-    elif session["issue_mode"] == "recording":
-        accumulated = session.get("accumulated_text", "")
-        segments_count = session.get("segments_count", 0)
-        
-        # Constants
-        MIN_SEGMENTS = 3  # Minimum for quality (trigger + 2 more)
-        GOOD_SEGMENTS = 5  # Ideal amount for context
-        MAX_SEGMENTS = 10  # Safety limit
-        IDLE_TIMEOUT = 5  # Process after 5s of silence
-        
-        # Check idle time to detect silence
-        idle_time = SimpleSessionStorage.get_session_idle_time(session_id)
-        
-        # If user went silent for 5+ seconds, process what we have
-        if idle_time and idle_time > IDLE_TIMEOUT and segments_count >= MIN_SEGMENTS:
-            print(f"⏱️  User silent for {idle_time:.1f}s, processing with {segments_count} segments...", flush=True)
-            # Don't add new segment, process what we had
-            should_process = True
-        else:
-            # Add this new segment
-            accumulated += " " + full_text
-            segments_count += 1
-            
-            print(f"📝 Segment {segments_count}: '{full_text}'", flush=True)
-            print(f"📚 Full accumulated: '{accumulated[:150]}...'", flush=True)
-            
-            # Update session with new segment
-            SimpleSessionStorage.update_session(
-                session_id,
-                accumulated_text=accumulated,
-                segments_count=segments_count
-            )
-            
-            # Collect at least 3 segments minimum before any processing
-            if segments_count < MIN_SEGMENTS:
-                print(f"⏳ Collecting minimum segments ({segments_count}/{MIN_SEGMENTS})...", flush=True)
-                return f"collecting_{segments_count}"
-            
-            # Collect up to 5 segments without AI check (good quality baseline)
-            if segments_count < GOOD_SEGMENTS:
-                print(f"⏳ Collecting segments ({segments_count}/{GOOD_SEGMENTS} for quality)...", flush=True)
-                return f"collecting_{segments_count}"
-            
-            # After 5 segments, check if we need more or should process
-            should_process = False
-            
-            # Check if we hit max segments (safety limit)
-            if segments_count >= MAX_SEGMENTS:
-                print(f"⚠️  Reached max segments ({MAX_SEGMENTS}), processing now...", flush=True)
-                should_process = True
-            else:
-                # Ask AI if we have enough and if user is still on topic
-                print(f"🤖 Checking with AI if issue is complete...", flush=True)
-                check_result = await issue_detector.ai_check_if_issue_complete(accumulated, segments_count)
-                
-                is_complete = check_result.get("is_complete", False)
-                is_on_topic = check_result.get("is_still_on_topic", True)
-                reason = check_result.get("reason", "")
-                
-                print(f"🤖 AI Check: complete={is_complete}, on_topic={is_on_topic}, reason='{reason}'", flush=True)
-                
-                # Decision logic - BE VERY LENIENT
-                if is_complete:
-                    # AI says we have enough - process it!
-                    print(f"✅ AI says we have enough! Processing now...", flush=True)
-                    should_process = True
-                elif not is_on_topic and len(accumulated.strip()) < 15:
-                    # User went completely off-topic with almost no content - likely accidental
-                    print(f"🚫 Off-topic with no content (<15 chars), discarding...", flush=True)
-                    SimpleSessionStorage.reset_session(session_id)
-                    return "discarded"
-                elif not is_on_topic:
-                    # User went off-topic but we have content - process what we have!
-                    print(f"✅ User went off-topic but have content, processing...", flush=True)
-                    should_process = True
-                else:
-                    # Not complete yet, but still on topic - keep collecting
-                    print(f"⏳ Need more details, continuing collection...", flush=True)
-                    return f"collecting_{segments_count}"
-        
-        # If not ready to process, return early
-        if not should_process:
-            return f"collecting_{segments_count}"
-        
-        # Mark as processing to prevent duplicates
-        SimpleSessionStorage.update_session(
-            session_id,
-            issue_mode="processing",
-            accumulated_text=accumulated,
-            segments_count=segments_count
-        )
-        
-        # Process the issue using helper function
-        print(f"✅ Processing issue with {segments_count} segments...", flush=True)
-        return await process_issue_creation(session_id, accumulated, segments_count, user)
-    
-    # If already processing, ignore additional segments
-    elif session["issue_mode"] == "processing":
-        print(f"⏳ Already processing issue, ignoring this segment", flush=True)
-        return "processing"
-    
-    # Passive listening
-    return "listening"
-
-
-@app.get("/test")
-async def test_interface(uid: str = Query("test_user_123"), dev: str = Query(None)):
-    """Development testing interface - hidden in production."""
-    # Only show if dev parameter is provided
-    if not dev or dev != "true":
-        return HTMLResponse(content=f"""
-        <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>Not Found</title>
-                <style>{get_mobile_css()}</style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="card" style="margin-top: 40px; padding: 40px 24px; text-align: center;">
-                        <h1 style="font-size: 48px; margin-bottom: 16px;">404</h1>
-                        <h2 style="border-bottom: none; padding-bottom: 0;">Page Not Found</h2>
-                        <p style="margin-bottom: 24px;">The page you're looking for doesn't exist.</p>
-                        <a href="/" class="btn btn-primary">Go to Homepage</a>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """, status_code=404)
-    
-    return HTMLResponse(content=f"""
-    <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>GitHub Issues - Test Interface</title>
-            <style>
-                {get_mobile_css()}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header-success">
-                    <h1>🧪 Test Interface</h1>
-                    <p>Test GitHub issue creation without OMI device</p>
-                </div>
-
-                <div class="card">
-                    <h2>Authentication</h2>
-                    <div class="input-group">
-                        <label>User ID (UID):</label>
-                        <input type="text" id="uid" value="{uid}">
-                    </div>
-                    <button class="btn btn-primary" onclick="authenticate()">🔐 Authenticate GitHub</button>
-                    <button class="btn btn-secondary" onclick="checkAuth()">🔍 Check Auth Status</button>
-                    <div id="authStatus" style="margin-top: 10px;"></div>
-                </div>
-
-                <div class="card">
-                    <h2>Test Voice Commands</h2>
-                    <div class="input-group">
-                        <label>What would you say to OMI:</label>
-                        <textarea id="voiceInput" rows="5" placeholder='Example: "Feedback Post, the app keeps crashing when I try to upload photos. It happens every time on my iPhone 14. The app freezes for a second and then closes completely. This started after the latest update and makes the app unusable."'></textarea>
-                    </div>
-                    <button class="btn btn-primary" onclick="sendCommand()">🎤 Send Command</button>
-                    <button class="btn btn-secondary" onclick="clearLogs()">🗑️ Clear Logs</button>
-                    
-                    <div id="status" class="status"></div>
-                </div>
-
-                <div class="card">
-                    <h3>Quick Examples (Click to use)</h3>
-                    <div class="example" onclick="useExample(this)">
-                        Feedback Post, the app keeps crashing when I try to upload photos. It happens every time on my iPhone 14. The app freezes and then closes. This started after the latest update.
-                    </div>
-                    <div class="example" onclick="useExample(this)">
-                        Feedback Post, I found a bug where the search function doesn't work properly. When I type in the search bar nothing happens. I've tried on both Chrome and Safari. It worked fine last week.
-                    </div>
-                    <div class="example" onclick="useExample(this)">
-                        Create issue, the dark mode toggle is not saving my preference. Every time I reopen the app it goes back to light mode. This is really annoying because I prefer dark mode.
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>Activity Log</h2>
-                    <div id="log" class="log">
-                        <div class="log-entry">
-                            <span class="timestamp">Ready</span>
-                            <span>Waiting for commands...</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <script>
-                const sessionId = 'test_session_' + Date.now();
-                
-                function addLog(message) {{
-                    const log = document.getElementById('log');
-                    const entry = document.createElement('div');
-                    entry.className = 'log-entry';
-                    const time = new Date().toLocaleTimeString();
-                    entry.innerHTML = `<span class="timestamp">[${{time}}]</span><span>${{message}}</span>`;
-                    log.insertBefore(entry, log.firstChild);
-                }}
-                
-                function setStatus(message, type = 'info') {{
-                    const status = document.getElementById('status');
-                    status.textContent = message;
-                    status.className = 'status ' + type;
-                    status.style.display = 'block';
-                }}
-                
-                async function checkAuth() {{
-                    const uid = document.getElementById('uid').value;
-                    try {{
-                        const response = await fetch(`/setup-completed?uid=${{uid}}`);
-                        const data = await response.json();
-                        
-                        const authStatus = document.getElementById('authStatus');
-                        if (data.is_setup_completed) {{
-                            authStatus.innerHTML = '<div class="success-box">✅ Connected to GitHub with repository selected</div>';
-                            addLog('✅ Authentication verified');
-                        }} else {{
-                            authStatus.innerHTML = '<div class="error-box">❌ Not connected or no repository selected</div>';
-                            addLog('❌ Not authenticated');
-                        }}
-                    }} catch (error) {{
-                        addLog('❌ Error: ' + error.message);
-                    }}
-                }}
-                
-                function authenticate() {{
-                    const uid = document.getElementById('uid').value;
-                    addLog('Opening GitHub authentication...');
-                    window.open(`/auth?uid=${{uid}}`, '_blank');
-                    setTimeout(() => addLog('After authenticating, click "Check Auth Status"'), 1000);
-                }}
-                
-                async function sendCommand() {{
-                    const uid = document.getElementById('uid').value;
-                    const voiceInput = document.getElementById('voiceInput').value;
-                    
-                    if (!uid || !voiceInput) {{
-                        alert('Please enter both User ID and voice command');
-                        return;
-                    }}
-                    
-                    setStatus('🎤 Processing command...', 'recording');
-                    addLog('📤 Sending: "' + voiceInput.substring(0, 100) + '..."');
-                    
-                    try {{
-                        const segments = [{{
-                            text: voiceInput,
-                            speaker: "SPEAKER_00",
-                            speakerId: 0,
-                            is_user: true,
-                            start: 0.0,
-                            end: 5.0
-                        }}];
-                        
-                        const response = await fetch(`/webhook?session_id=${{sessionId}}&uid=${{uid}}`, {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify(segments)
-                        }});
-                        
-                        const data = await response.json();
-                        
-                        if (response.ok) {{
-                            if (data.message && data.message.includes('✅')) {{
-                                setStatus(data.message, 'success');
-                                addLog('✅ ' + data.message);
-                            }} else if (data.message && data.message.includes('❌')) {{
-                                setStatus(data.message, 'error');
-                                addLog('❌ ' + data.message);
-                            }} else {{
-                                setStatus('Collecting feedback... (send more segments)', 'recording');
-                                addLog('📝 ' + (data.message || 'Processing...'));
-                            }}
-                        }} else {{
-                            setStatus('❌ Error: ' + (data.message || 'Unknown error'), 'error');
-                            addLog('❌ Error: ' + (data.message || 'Unknown error'));
-                        }}
-                    }} catch (error) {{
-                        setStatus('❌ Network error', 'error');
-                        addLog('❌ Network error: ' + error.message);
-                    }}
-                }}
-                
-                function useExample(element) {{
-                    document.getElementById('voiceInput').value = element.textContent.trim();
-                    addLog('📝 Example loaded');
-                }}
-                
-                function clearLogs() {{
-                    document.getElementById('log').innerHTML = '<div class="log-entry"><span class="timestamp">Cleared</span><span>Logs cleared</span></div>';
-                    setStatus('');
-                }}
-                
-                window.onload = () => checkAuth();
-            </script>
-        </body>
-    </html>
-    """)
 
 
 @app.get("/health")
@@ -1077,6 +996,10 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "omi-github-issues"}
 
+
+# ============================================
+# CSS Styles
+# ============================================
 
 def get_mobile_css() -> str:
     """Returns GitHub dark theme inspired CSS styles."""
@@ -1086,17 +1009,7 @@ def get_mobile_css() -> str:
             padding: 0;
             box-sizing: border-box;
         }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-        
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
             background: #0d1117;
@@ -1104,23 +1017,19 @@ def get_mobile_css() -> str:
             min-height: 100vh;
             padding: 20px;
             line-height: 1.6;
-            animation: fadeIn 0.5s ease-out;
         }
-        
+
         .container {
             max-width: 650px;
             margin: 0 auto;
-            animation: fadeIn 0.6s ease-out;
         }
-        
+
         .icon {
             font-size: 64px;
             text-align: center;
             margin-bottom: 20px;
-            animation: pulse 2s infinite;
-            filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5));
         }
-        
+
         h1 {
             color: #c9d1d9;
             font-size: 32px;
@@ -1128,7 +1037,7 @@ def get_mobile_css() -> str:
             text-align: center;
             margin-bottom: 12px;
         }
-        
+
         h2 {
             color: #c9d1d9;
             font-size: 24px;
@@ -1137,48 +1046,35 @@ def get_mobile_css() -> str:
             border-bottom: 1px solid #21262d;
             padding-bottom: 10px;
         }
-        
+
         h3 {
             color: #c9d1d9;
             font-size: 19px;
             font-weight: 600;
             margin-bottom: 12px;
         }
-        
+
         p {
             color: #8b949e;
             text-align: center;
             margin-bottom: 24px;
             font-size: 16px;
         }
-        
+
         .username {
             color: #58a6ff;
             font-weight: 600;
             font-size: 18px;
         }
-        
-        .header-success {
-            background: #161b22;
-            padding: 40px 24px;
-            border-radius: 6px;
-            margin-bottom: 24px;
-            border: 1px solid #30363d;
-        }
-        
+
         .card {
             background: #161b22;
             border-radius: 6px;
             padding: 24px;
             margin-bottom: 16px;
             border: 1px solid #30363d;
-            transition: border-color 0.2s;
         }
-        
-        .card:hover {
-            border-color: #58a6ff;
-        }
-        
+
         .btn {
             display: inline-block;
             padding: 9px 20px;
@@ -1193,35 +1089,35 @@ def get_mobile_css() -> str:
             text-align: center;
             line-height: 20px;
         }
-        
+
         .btn-primary {
             background: #238636;
             color: #ffffff;
             border-color: #238636;
         }
-        
+
         .btn-primary:hover {
             background: #2ea043;
             border-color: #2ea043;
         }
-        
+
         .btn-secondary {
             background: transparent;
             color: #c9d1d9;
             border-color: #30363d;
         }
-        
+
         .btn-secondary:hover {
             background: #30363d;
             border-color: #8b949e;
         }
-        
+
         .btn-block {
             display: block;
             width: 100%;
             text-align: center;
         }
-        
+
         .repo-select {
             width: 100%;
             padding: 9px 12px;
@@ -1232,86 +1128,27 @@ def get_mobile_css() -> str:
             font-family: inherit;
             background: #0d1117;
             color: #c9d1d9;
-            transition: all 0.2s;
             cursor: pointer;
         }
-        
+
         .repo-select:focus {
             outline: none;
             border-color: #58a6ff;
             box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
         }
-        
-        input[type="text"], textarea {
-            width: 100%;
-            padding: 9px 12px;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            font-size: 14px;
-            font-family: inherit;
-            background: #0d1117;
-            color: #c9d1d9;
-            transition: all 0.2s;
-        }
-        
-        input[type="text"]:focus, textarea:focus {
-            outline: none;
-            border-color: #58a6ff;
-            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
-        }
-        
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-        
-        .input-group {
-            margin-bottom: 15px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #c9d1d9;
-            font-size: 14px;
-        }
-        
-        .example {
-            background: #161b22;
-            padding: 16px 18px;
-            border-radius: 6px;
-            margin: 12px 0;
-            font-size: 14px;
-            cursor: pointer;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            transition: all 0.2s;
-            line-height: 1.6;
-        }
-        
-        .example:hover {
-            border-color: #58a6ff;
-            background: #21262d;
-        }
-        
+
         .steps {
             margin: 20px 0;
         }
-        
+
         .step {
             display: flex;
             margin: 18px 0;
             align-items: flex-start;
             padding: 12px;
             border-radius: 6px;
-            transition: background 0.2s;
         }
-        
-        .step:hover {
-            background: #21262d;
-        }
-        
+
         .step-number {
             background: #238636;
             color: white;
@@ -1326,7 +1163,7 @@ def get_mobile_css() -> str:
             flex-shrink: 0;
             font-size: 14px;
         }
-        
+
         .step-content {
             flex: 1;
             padding-top: 4px;
@@ -1334,11 +1171,22 @@ def get_mobile_css() -> str:
             line-height: 1.6;
             color: #8b949e;
         }
-        
+
         .step-content strong {
             color: #c9d1d9;
         }
-        
+
+        .example {
+            background: #0d1117;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 8px 0;
+            font-size: 14px;
+            border: 1px solid #30363d;
+            color: #8b949e;
+            font-style: italic;
+        }
+
         .success-box {
             background: rgba(35, 134, 54, 0.15);
             color: #3fb950;
@@ -1348,7 +1196,7 @@ def get_mobile_css() -> str:
             text-align: center;
             border: 1px solid #238636;
         }
-        
+
         .error-box {
             background: rgba(248, 81, 73, 0.15);
             color: #f85149;
@@ -1357,54 +1205,21 @@ def get_mobile_css() -> str:
             margin: 14px 0;
             border: 1px solid #f85149;
         }
-        
-        .status {
-            padding: 15px;
-            border-radius: 6px;
-            margin: 15px 0;
-            font-weight: 500;
-            display: none;
-            border: 1px solid;
-        }
-        
-        .status.info {
-            background: rgba(88, 166, 255, 0.15);
-            color: #58a6ff;
-            border-color: #1f6feb;
-        }
-        
-        .status.recording {
-            background: rgba(187, 128, 9, 0.15);
-            color: #d29922;
-            border-color: #9e6a03;
-        }
-        
-        .status.success {
-            background: rgba(35, 134, 54, 0.15);
-            color: #3fb950;
-            border-color: #238636;
-        }
-        
-        .status.error {
-            background: rgba(248, 81, 73, 0.15);
-            color: #f85149;
-            border-color: #f85149;
-        }
-        
-        ul, ol {
+
+        ul {
             margin-left: 20px;
         }
-        
+
         li {
             margin: 8px 0;
             color: #8b949e;
         }
-        
+
         strong {
             color: #c9d1d9;
             font-weight: 600;
         }
-        
+
         .footer {
             text-align: center;
             color: #8b949e;
@@ -1413,82 +1228,30 @@ def get_mobile_css() -> str:
             font-size: 14px;
             border-top: 1px solid #21262d;
         }
-        
+
         .footer strong {
             color: #58a6ff;
         }
-        
-        .footer a {
-            color: #58a6ff;
-            text-decoration: none;
-        }
-        
-        .footer a:hover {
-            text-decoration: underline;
-        }
-        
-        /* GitHub-style scrollbars */
-        ::-webkit-scrollbar {
-            width: 12px;
-            height: 12px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: #0d1117;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: #30363d;
-            border-radius: 6px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #484f58;
-        }
-        
-        /* Log styles for test interface */
-        .log {
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 15px;
-            max-height: 300px;
-            overflow-y: auto;
-            font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
-            font-size: 12px;
-            margin-top: 15px;
-        }
-        
-        .log-entry {
-            padding: 5px 0;
-            border-bottom: 1px solid #21262d;
-            color: #c9d1d9;
-        }
-        
-        .timestamp {
-            color: #8b949e;
-            margin-right: 10px;
-        }
-        
+
         @media (max-width: 480px) {
             body {
                 padding: 12px;
             }
-            
+
             .card {
                 padding: 18px;
             }
-            
+
             h1 {
                 font-size: 26px;
             }
-            
+
             .btn {
                 display: block;
                 width: 100%;
                 margin: 10px 0;
             }
-            
+
             .icon {
                 font-size: 52px;
             }
@@ -1496,21 +1259,24 @@ def get_mobile_css() -> str:
     """
 
 
+# ============================================
+# Main Entry Point
+# ============================================
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("APP_PORT", 8000))
     host = os.getenv("APP_HOST", "0.0.0.0")
-    
-    print("🐙 OMI GitHub Issues Integration")
+
+    print("OMI GitHub Issues Integration (Chat Tools)")
     print("=" * 50)
-    print("✅ Using file-based storage")
-    print(f"🚀 Starting on {host}:{port}")
+    print("Using file-based storage")
+    print(f"Starting on {host}:{port}")
     print("=" * 50)
-    
+
     uvicorn.run(
         "main:app",
         host=host,
         port=port,
         reload=True
     )
-

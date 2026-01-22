@@ -158,10 +158,10 @@ class GitHubClient:
                 "title": title,
                 "body": body
             }
-            
+
             if labels:
                 issue_data["labels"] = labels
-            
+
             response = requests.post(
                 f"{self.api_base}/repos/{repo_full_name}/issues",
                 headers={
@@ -170,7 +170,7 @@ class GitHubClient:
                 },
                 json=issue_data
             )
-            
+
             if response.status_code == 201:
                 issue = response.json()
                 return {
@@ -186,7 +186,7 @@ class GitHubClient:
                     "success": False,
                     "error": f"GitHub API error: {error_msg}"
                 }
-                
+
         except Exception as e:
             print(f"❌ Error creating issue: {e}")
             import traceback
@@ -195,4 +195,178 @@ class GitHubClient:
                 "success": False,
                 "error": str(e)
             }
+
+    def list_issues(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        state: str = "open",
+        per_page: int = 10
+    ) -> List[Dict]:
+        """
+        List issues in a repository.
+        Returns list of issue dicts.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/issues",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                params={
+                    "state": state,
+                    "per_page": per_page,
+                    "sort": "created",
+                    "direction": "desc"
+                }
+            )
+
+            if response.status_code == 200:
+                issues = response.json()
+                return [
+                    {
+                        "number": issue["number"],
+                        "title": issue["title"],
+                        "state": issue["state"],
+                        "body": issue.get("body", ""),
+                        "labels": [label["name"] for label in issue.get("labels", [])],
+                        "url": issue["html_url"],
+                        "created_at": issue["created_at"],
+                        "user": issue["user"]["login"] if issue.get("user") else None
+                    }
+                    for issue in issues
+                    if "pull_request" not in issue  # Filter out PRs
+                ]
+            else:
+                print(f"❌ Error listing issues: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"❌ Error listing issues: {e}")
+            return []
+
+    def get_issue(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        issue_number: int
+    ) -> Optional[Dict]:
+        """
+        Get details of a specific issue.
+        Returns issue dict if successful.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/issues/{issue_number}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+
+            if response.status_code == 200:
+                issue = response.json()
+                return {
+                    "number": issue["number"],
+                    "title": issue["title"],
+                    "state": issue["state"],
+                    "body": issue.get("body", ""),
+                    "labels": [label["name"] for label in issue.get("labels", [])],
+                    "url": issue["html_url"],
+                    "created_at": issue["created_at"],
+                    "updated_at": issue["updated_at"],
+                    "user": issue["user"]["login"] if issue.get("user") else None,
+                    "assignees": [a["login"] for a in issue.get("assignees", [])],
+                    "comments": issue.get("comments", 0)
+                }
+            elif response.status_code == 404:
+                return None
+            else:
+                print(f"❌ Error getting issue: {response.status_code}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Error getting issue: {e}")
+            return None
+
+    def add_issue_comment(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        issue_number: int,
+        body: str
+    ) -> Optional[Dict]:
+        """
+        Add a comment to an issue.
+        Returns comment data if successful.
+        """
+        try:
+            response = requests.post(
+                f"{self.api_base}/repos/{repo_full_name}/issues/{issue_number}/comments",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json={"body": body}
+            )
+
+            if response.status_code == 201:
+                comment = response.json()
+                return {
+                    "success": True,
+                    "comment_id": comment["id"],
+                    "comment_url": comment["html_url"]
+                }
+            else:
+                error_msg = response.json().get("message", response.text)
+                print(f"❌ GitHub API error: {response.status_code} - {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"GitHub API error: {error_msg}"
+                }
+
+        except Exception as e:
+            print(f"❌ Error adding comment: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def get_repo_labels_with_details(
+        self,
+        access_token: str,
+        repo_full_name: str
+    ) -> List[Dict]:
+        """
+        Fetch all labels from a repository with full details.
+        Returns list of label dicts with name, color, description.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/labels",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                params={"per_page": 100}
+            )
+
+            if response.status_code == 200:
+                labels = response.json()
+                return [
+                    {
+                        "name": label["name"],
+                        "color": label["color"],
+                        "description": label.get("description", "")
+                    }
+                    for label in labels
+                ]
+            else:
+                print(f"⚠️  Could not fetch labels: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"⚠️  Error fetching labels: {e}")
+            return []
 
