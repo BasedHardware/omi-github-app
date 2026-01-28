@@ -1,13 +1,13 @@
 """
 Claude Code integration - AI-powered coding using Anthropic API.
+Uses GitHub API directly (no git binary required).
 """
 import os
 import re
 import tempfile
-import shutil
 from typing import Optional, Dict, Any, List, Tuple
 from anthropic import Anthropic
-import git
+import requests
 import logging
 
 # Set up logging
@@ -52,6 +52,7 @@ EXPLANATION:
 What this does and why
 
 Be specific about which files to create or modify. Include the full file contents for each file.
+If the feature is very simple (like adding a test file), just create that one file without overthinking it.
 """
 
     logger.info(f"Generating code with Claude for: {feature_description}")
@@ -95,23 +96,18 @@ def parse_code_changes(changes: str) -> List[Tuple[str, str]]:
     return files
 
 
-def get_default_branch(repo_url: str, github_token: str) -> str:
+def get_default_branch(owner: str, repo: str, github_token: str) -> str:
     """
     Get the default branch of a GitHub repository.
 
     Args:
-        repo_url: GitHub repo URL (https://github.com/owner/repo)
+        owner: Repository owner
+        repo: Repository name
         github_token: GitHub access token
 
     Returns:
         Default branch name (e.g., 'main', 'master', 'flutterflow')
     """
-    import requests
-
-    # Extract owner/repo from URL
-    parts = repo_url.replace('https://github.com/', '').split('/')
-    owner, repo = parts[0], parts[1]
-
     url = f'https://api.github.com/repos/{owner}/{repo}'
     headers = {
         'Authorization': f'token {github_token}',
@@ -131,129 +127,211 @@ def get_default_branch(repo_url: str, github_token: str) -> str:
     return 'main'
 
 
-def apply_changes_to_repo(
-    repo_url: str,
-    branch_name: str,
-    commit_message: str,
-    changes: str,
-    github_token: str
-) -> Dict[str, Any]:
+def get_repo_context_via_api(owner: str, repo: str, github_token: str, path: str = "") -> str:
     """
-    Clone repo, apply changes, commit, and push.
+    Get repository context via GitHub API (no git clone needed).
 
     Args:
-        repo_url: GitHub repo URL
-        branch_name: New branch name for changes
-        commit_message: Commit message
-        changes: Code changes to apply (from Claude)
+        owner: Repository owner
+        repo: Repository name
         github_token: GitHub access token
-
-    Returns:
-        Dict with success status, branch name, and default_branch
-    """
-    try:
-        # Get default branch first
-        default_branch = get_default_branch(repo_url, github_token)
-
-        # Create temp directory
-        with tempfile.TemporaryDirectory() as tmpdir:
-            logger.info(f"Cloning {repo_url} to {tmpdir}")
-
-            # Clone repo with auth
-            auth_url = repo_url.replace('https://', f'https://{github_token}@')
-            repo = git.Repo.clone_from(auth_url, tmpdir, depth=1)
-
-            logger.info(f"Creating branch: {branch_name}")
-
-            # Create new branch from default branch
-            new_branch = repo.create_head(branch_name)
-            new_branch.checkout()
-
-            # Parse changes and apply to files
-            file_changes = parse_code_changes(changes)
-
-            for file_path, file_content in file_changes:
-                full_path = os.path.join(tmpdir, file_path)
-
-                # Create directory if needed
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-                # Write file
-                with open(full_path, 'w') as f:
-                    f.write(file_content)
-
-                logger.info(f"Written file: {file_path}")
-
-            # Stage all changes
-            repo.git.add(A=True)
-
-            # Check if there are changes to commit
-            if repo.is_dirty() or repo.untracked_files:
-                # Commit
-                repo.index.commit(commit_message)
-                logger.info(f"Committed changes: {commit_message}")
-
-                # Push to remote - use branch_name string, not new_branch object
-                origin = repo.remote('origin')
-                logger.info(f"Pushing branch {branch_name} to remote...")
-                origin.push(f"{branch_name}:{branch_name}")
-
-                logger.info(f"Successfully pushed to branch {branch_name}")
-
-                return {
-                    'success': True,
-                    'branch': branch_name,
-                    'default_branch': default_branch,
-                    'message': f'Pushed changes to branch {branch_name}'
-                }
-            else:
-                logger.warning("No changes to commit")
-                return {
-                    'success': False,
-                    'message': 'No changes were made'
-                }
-
-    except Exception as e:
-        logger.error(f"Error applying changes: {e}", exc_info=True)
-        return {
-            'success': False,
-            'message': f'Failed to apply changes: {str(e)}'
-        }
-
-
-def get_repo_context(repo_path: str, max_files: int = 20) -> str:
-    """
-    Get context about the repository structure.
-
-    Args:
-        repo_path: Path to cloned repository
-        max_files: Maximum number of files to include in context
+        path: Path within repo to explore (default: root)
 
     Returns:
         String describing the repo structure
     """
-    context = []
-    context.append("Repository Structure:")
+    url = f'https://api.github.com/repos/{owner}/{repo}/contents/{path}'
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
 
-    file_count = 0
-    for root, dirs, files in os.walk(repo_path):
-        # Skip hidden and common ignored directories
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', 'venv', '__pycache__']]
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            items = response.json()
 
-        level = root.replace(repo_path, '').count(os.sep)
-        indent = ' ' * 2 * level
-        context.append(f'{indent}{os.path.basename(root)}/')
+            context = ["Repository Structure:"]
 
-        sub_indent = ' ' * 2 * (level + 1)
-        for file in files[:5]:  # Limit files per directory
-            if not file.startswith('.'):
-                context.append(f'{sub_indent}{file}')
-                file_count += 1
-                if file_count >= max_files:
-                    context.append(f'\n... and more files')
-                    return '\n'.join(context)
+            # List directories and files
+            for item in items[:20]:  # Limit to 20 items
+                if item['type'] == 'dir':
+                    context.append(f"  📁 {item['name']}/")
+                else:
+                    context.append(f"  📄 {item['name']}")
 
-    return '\n'.join(context)
+            if len(items) > 20:
+                context.append(f"  ... and {len(items) - 20} more items")
+
+            return '\n'.join(context)
+    except Exception as e:
+        logger.error(f"Failed to get repo context: {e}")
+
+    return "Repository: Unable to fetch structure"
+
+
+def create_or_update_files_via_api(
+    owner: str,
+    repo: str,
+    branch_name: str,
+    files: List[Tuple[str, str]],
+    commit_message: str,
+    github_token: str,
+    base_branch: str
+) -> Dict[str, Any]:
+    """
+    Create a new branch and commit files using GitHub API.
+
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        branch_name: New branch name
+        files: List of (file_path, content) tuples
+        commit_message: Commit message
+        github_token: GitHub access token
+        base_branch: Base branch to branch from
+
+    Returns:
+        Dict with success status and branch name
+    """
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+
+    try:
+        # Step 1: Get the base branch reference
+        logger.info(f"Getting reference for base branch: {base_branch}")
+        ref_url = f'https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{base_branch}'
+        response = requests.get(ref_url, headers=headers)
+
+        if response.status_code != 200:
+            return {
+                'success': False,
+                'message': f'Failed to get base branch: {response.text}'
+            }
+
+        base_sha = response.json()['object']['sha']
+        logger.info(f"Base branch SHA: {base_sha}")
+
+        # Step 2: Get the base tree
+        logger.info(f"Getting base tree...")
+        commit_url = f'https://api.github.com/repos/{owner}/{repo}/git/commits/{base_sha}'
+        response = requests.get(commit_url, headers=headers)
+
+        if response.status_code != 200:
+            return {
+                'success': False,
+                'message': f'Failed to get base commit: {response.text}'
+            }
+
+        base_tree_sha = response.json()['tree']['sha']
+        logger.info(f"Base tree SHA: {base_tree_sha}")
+
+        # Step 3: Create blobs for each file
+        logger.info(f"Creating blobs for {len(files)} files...")
+        tree_items = []
+
+        for file_path, content in files:
+            # Create blob
+            blob_url = f'https://api.github.com/repos/{owner}/{repo}/git/blobs'
+            blob_data = {
+                'content': content,
+                'encoding': 'utf-8'
+            }
+
+            response = requests.post(blob_url, headers=headers, json=blob_data)
+
+            if response.status_code != 201:
+                logger.error(f"Failed to create blob for {file_path}: {response.text}")
+                continue
+
+            blob_sha = response.json()['sha']
+            logger.info(f"Created blob for {file_path}: {blob_sha}")
+
+            tree_items.append({
+                'path': file_path,
+                'mode': '100644',  # Regular file
+                'type': 'blob',
+                'sha': blob_sha
+            })
+
+        if not tree_items:
+            return {
+                'success': False,
+                'message': 'No files were successfully processed'
+            }
+
+        # Step 4: Create a new tree
+        logger.info(f"Creating new tree with {len(tree_items)} items...")
+        tree_url = f'https://api.github.com/repos/{owner}/{repo}/git/trees'
+        tree_data = {
+            'base_tree': base_tree_sha,
+            'tree': tree_items
+        }
+
+        response = requests.post(tree_url, headers=headers, json=tree_data)
+
+        if response.status_code != 201:
+            return {
+                'success': False,
+                'message': f'Failed to create tree: {response.text}'
+            }
+
+        new_tree_sha = response.json()['sha']
+        logger.info(f"New tree SHA: {new_tree_sha}")
+
+        # Step 5: Create a commit
+        logger.info(f"Creating commit...")
+        commit_url = f'https://api.github.com/repos/{owner}/{repo}/git/commits'
+        commit_data = {
+            'message': commit_message,
+            'tree': new_tree_sha,
+            'parents': [base_sha]
+        }
+
+        response = requests.post(commit_url, headers=headers, json=commit_data)
+
+        if response.status_code != 201:
+            return {
+                'success': False,
+                'message': f'Failed to create commit: {response.text}'
+            }
+
+        new_commit_sha = response.json()['sha']
+        logger.info(f"New commit SHA: {new_commit_sha}")
+
+        # Step 6: Create/update the branch reference
+        logger.info(f"Creating branch: {branch_name}")
+        ref_url = f'https://api.github.com/repos/{owner}/{repo}/git/refs'
+        ref_data = {
+            'ref': f'refs/heads/{branch_name}',
+            'sha': new_commit_sha
+        }
+
+        response = requests.post(ref_url, headers=headers, json=ref_data)
+
+        if response.status_code not in [201, 422]:  # 422 means already exists
+            return {
+                'success': False,
+                'message': f'Failed to create branch: {response.text}'
+            }
+
+        logger.info(f"Branch {branch_name} created successfully!")
+
+        return {
+            'success': True,
+            'branch': branch_name,
+            'default_branch': base_branch,
+            'message': f'Created branch {branch_name} with {len(tree_items)} files'
+        }
+
+    except Exception as e:
+        logger.error(f"Error creating branch via API: {e}", exc_info=True)
+        return {
+            'success': False,
+            'message': f'Failed to create branch: {str(e)}'
+        }
 
 
 def create_pr_with_github_api(
@@ -280,8 +358,6 @@ def create_pr_with_github_api(
     Returns:
         PR URL if successful, None otherwise
     """
-    import requests
-
     url = f'https://api.github.com/repos/{owner}/{repo}/pulls'
     headers = {
         'Authorization': f'token {github_token}',
