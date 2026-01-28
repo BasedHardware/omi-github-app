@@ -108,3 +108,31 @@ class SimpleUserStorage:
         """Check if user has selected a repository."""
         user = users.get(uid)
         return user is not None and user.get("selected_repo") is not None
+
+    @staticmethod
+    def save_anthropic_key(uid: str, anthropic_key: str):
+        """Save user's Anthropic API key."""
+        if uid in users:
+            users[uid]["anthropic_key"] = anthropic_key
+            users[uid]["updated_at"] = datetime.utcnow().isoformat()
+            save_users()
+            print(f"Saved Anthropic key for {uid[:10]}...")
+            return True
+        return False
+
+    @staticmethod
+    def get_anthropic_key(uid: str) -> Optional[str]:
+        """Get user's Anthropic API key."""
+        user = users.get(uid)
+        return user.get("anthropic_key") if user else None
+
+    @staticmethod
+    def delete_anthropic_key(uid: str):
+        """Delete user's Anthropic API key."""
+        if uid in users and "anthropic_key" in users[uid]:
+            del users[uid]["anthropic_key"]
+            users[uid]["updated_at"] = datetime.utcnow().isoformat()
+            save_users()
+            print(f"Deleted Anthropic key for {uid[:10]}...")
+            return True
+        return False

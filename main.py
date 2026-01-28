@@ -687,6 +687,32 @@ async def root(uid: str = Query(None)):
                 </div>
 
                 <div class="card">
+                    <h3>Claude Code Settings</h3>
+                    <p style="text-align: left; font-size: 14px; margin-bottom: 16px;">
+                        Add your Anthropic API key to enable AI coding features through chat
+                    </p>
+
+                    <input type="password"
+                           id="anthropicKey"
+                           placeholder="sk-ant-..."
+                           style="width: 100%; padding: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; margin-bottom: 12px;"
+                           value="{user.get('anthropic_key', '')[:10] + '...' if user.get('anthropic_key') else ''}">
+
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-primary" onclick="saveAnthropicKey()" style="flex: 1;">
+                            Save API Key
+                        </button>
+                        <button class="btn btn-secondary" onclick="deleteAnthropicKey()">
+                            Remove
+                        </button>
+                    </div>
+
+                    <p style="text-align: left; font-size: 12px; color: #8b949e; margin-top: 12px;">
+                        Get your API key from <a href="https://console.anthropic.com/" target="_blank" style="color: #58a6ff;">console.anthropic.com</a>
+                    </p>
+                </div>
+
+                <div class="card">
                     <h3>Using Chat Commands</h3>
                     <p style="text-align: left; margin-bottom: 16px;">
                         Just chat with Omi naturally:
@@ -765,6 +791,47 @@ async def root(uid: str = Query(None)):
                         }} else {{
                             alert('Failed to refresh: ' + data.error);
                         }}
+                    }} catch (error) {{
+                        alert('Error: ' + error.message);
+                    }}
+                }}
+
+                async function saveAnthropicKey() {{
+                    const keyInput = document.getElementById('anthropicKey');
+                    const apiKey = keyInput.value.trim();
+
+                    if (!apiKey) {{
+                        alert('Please enter an API key');
+                        return;
+                    }}
+
+                    if (!apiKey.startsWith('sk-ant-')) {{
+                        alert('Invalid API key format. Should start with sk-ant-');
+                        return;
+                    }}
+
+                    try {{
+                        // Save locally first
+                        await fetch('/save-anthropic-key?uid={uid}&key=' + encodeURIComponent(apiKey), {{
+                            method: 'POST'
+                        }});
+
+                        alert('Anthropic API key saved successfully!');
+                    }} catch (error) {{
+                        alert('Error: ' + error.message);
+                    }}
+                }}
+
+                async function deleteAnthropicKey() {{
+                    if (!confirm('Remove your Anthropic API key?')) return;
+
+                    try {{
+                        await fetch('/delete-anthropic-key?uid={uid}', {{
+                            method: 'POST'
+                        }});
+
+                        document.getElementById('anthropicKey').value = '';
+                        alert('API key removed successfully!');
                     }} catch (error) {{
                         alert('Error: ' + error.message);
                     }}
@@ -987,6 +1054,53 @@ async def refresh_repos(uid: str = Query(...)):
         )
 
         return {"success": True, "repos_count": len(repos)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/get-anthropic-key")
+async def get_anthropic_key(uid: str = Query(...)):
+    """Get user's Anthropic API key."""
+    try:
+        key = SimpleUserStorage.get_anthropic_key(uid)
+        if key:
+            return {"success": True, "key": key}
+        else:
+            return {"success": False, "error": "No key found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/save-anthropic-key")
+async def save_anthropic_key(
+    uid: str = Query(...),
+    key: str = Query(...)
+):
+    """Save user's Anthropic API key."""
+    try:
+        # Create user if doesn't exist
+        user = SimpleUserStorage.get_user(uid)
+        if not user:
+            SimpleUserStorage.save_user(uid=uid, access_token="", github_username="", selected_repo="", available_repos=[])
+
+        success = SimpleUserStorage.save_anthropic_key(uid, key)
+        if success:
+            return {"success": True, "message": "Anthropic API key saved"}
+        else:
+            return {"success": False, "error": "Failed to save"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/delete-anthropic-key")
+async def delete_anthropic_key(uid: str = Query(...)):
+    """Delete user's Anthropic API key."""
+    try:
+        success = SimpleUserStorage.delete_anthropic_key(uid)
+        if success:
+            return {"success": True, "message": "Anthropic API key deleted"}
+        else:
+            return {"success": False, "error": "Key not found"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
