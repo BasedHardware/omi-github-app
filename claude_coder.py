@@ -342,7 +342,7 @@ def create_pr_with_github_api(
     body: str,
     github_token: str,
     base_branch: str = 'main'
-) -> Optional[str]:
+) -> Optional[Dict[str, Any]]:
     """
     Create a pull request using GitHub API.
 
@@ -356,7 +356,7 @@ def create_pr_with_github_api(
         base_branch: Base branch to merge into (default: 'main')
 
     Returns:
-        PR URL if successful, None otherwise
+        Dict with pr_url and pr_number if successful, None otherwise
     """
     url = f'https://api.github.com/repos/{owner}/{repo}/pulls'
     headers = {
@@ -376,9 +376,14 @@ def create_pr_with_github_api(
         response = requests.post(url, headers=headers, json=data)
 
         if response.status_code == 201:
-            pr_url = response.json().get('html_url')
+            pr_data = response.json()
+            pr_url = pr_data.get('html_url')
+            pr_number = pr_data.get('number')
             logger.info(f"PR created successfully: {pr_url}")
-            return pr_url
+            return {
+                'pr_url': pr_url,
+                'pr_number': pr_number
+            }
         else:
             error_msg = f"Failed to create PR: {response.status_code} - {response.text}"
             logger.error(error_msg)
@@ -386,3 +391,49 @@ def create_pr_with_github_api(
     except Exception as e:
         logger.error(f"Exception creating PR: {e}", exc_info=True)
         return None
+
+
+def merge_pr_with_github_api(
+    owner: str,
+    repo: str,
+    pr_number: int,
+    github_token: str,
+    merge_method: str = 'merge'
+) -> bool:
+    """
+    Merge a pull request using GitHub API.
+
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        pr_number: PR number to merge
+        github_token: GitHub access token
+        merge_method: Merge method ('merge', 'squash', or 'rebase')
+
+    Returns:
+        True if merged successfully, False otherwise
+    """
+    url = f'https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge'
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    data = {
+        'merge_method': merge_method
+    }
+
+    logger.info(f"Merging PR #{pr_number} using {merge_method} method")
+
+    try:
+        response = requests.put(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            logger.info(f"PR #{pr_number} merged successfully")
+            return True
+        else:
+            error_msg = f"Failed to merge PR: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return False
+    except Exception as e:
+        logger.error(f"Exception merging PR: {e}", exc_info=True)
+        return False
