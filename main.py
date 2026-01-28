@@ -1195,6 +1195,10 @@ async def tool_code_feature(request: Request):
         if not result.get('success'):
             return ChatToolResponse(error=f"Failed to apply changes: {result.get('message')}")
 
+        # Get the default branch from the result
+        default_branch = result.get('default_branch', 'main')
+        log(f"Default branch: {default_branch}")
+
         # Create pull request
         pr_title = f"AI: {feature[:60]}"
         pr_body = f"""## Feature Request
@@ -1214,7 +1218,8 @@ async def tool_code_feature(request: Request):
             branch=branch_name,
             title=pr_title,
             body=pr_body,
-            github_token=user["access_token"]
+            github_token=user["access_token"],
+            base_branch=default_branch
         )
 
         if pr_url:
