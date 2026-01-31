@@ -110,29 +110,51 @@ class SimpleUserStorage:
         return user is not None and user.get("selected_repo") is not None
 
     @staticmethod
-    def save_anthropic_key(uid: str, anthropic_key: str):
-        """Save user's Anthropic API key."""
+    def save_agent_provider(uid: str, provider: str):
+        """Save user's selected agent provider."""
         if uid in users:
-            users[uid]["anthropic_key"] = anthropic_key
+            users[uid]["agent_provider"] = provider
             users[uid]["updated_at"] = datetime.utcnow().isoformat()
             save_users()
-            print(f"Saved Anthropic key for {uid[:10]}...")
+            print(f"Saved agent provider for {uid[:10]}...: {provider}")
             return True
         return False
 
     @staticmethod
-    def get_anthropic_key(uid: str) -> Optional[str]:
-        """Get user's Anthropic API key."""
+    def get_agent_provider(uid: str) -> Optional[str]:
+        """Get user's selected agent provider."""
         user = users.get(uid)
-        return user.get("anthropic_key") if user else None
+        return user.get("agent_provider") if user else None
 
     @staticmethod
-    def delete_anthropic_key(uid: str):
-        """Delete user's Anthropic API key."""
-        if uid in users and "anthropic_key" in users[uid]:
-            del users[uid]["anthropic_key"]
+    def save_agent_api_key(uid: str, provider: str, api_key: str):
+        """Save user's API key for an agent provider."""
+        if uid in users:
+            if "agent_api_keys" not in users[uid]:
+                users[uid]["agent_api_keys"] = {}
+            users[uid]["agent_api_keys"][provider] = api_key
             users[uid]["updated_at"] = datetime.utcnow().isoformat()
             save_users()
-            print(f"Deleted Anthropic key for {uid[:10]}...")
+            print(f"Saved {provider} key for {uid[:10]}...")
             return True
+        return False
+
+    @staticmethod
+    def get_agent_api_key(uid: str, provider: str) -> Optional[str]:
+        """Get user's API key for an agent provider."""
+        user = users.get(uid)
+        if not user:
+            return None
+        return user.get("agent_api_keys", {}).get(provider)
+
+    @staticmethod
+    def delete_agent_api_key(uid: str, provider: str):
+        """Delete user's API key for an agent provider."""
+        if uid in users and "agent_api_keys" in users[uid]:
+            if provider in users[uid]["agent_api_keys"]:
+                del users[uid]["agent_api_keys"][provider]
+                users[uid]["updated_at"] = datetime.utcnow().isoformat()
+                save_users()
+                print(f"Deleted {provider} key for {uid[:10]}...")
+                return True
         return False

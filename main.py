@@ -15,6 +15,13 @@ from simple_storage import SimpleUserStorage
 from github_client import GitHubClient
 from issue_detector import ai_select_labels
 from models import ChatToolResponse
+from agent_providers import (
+    run_agent_provider,
+    PROVIDERS,
+    get_provider_label,
+    get_provider_default_key,
+    get_provider_base_url,
+)
 
 load_dotenv()
 
@@ -104,7 +111,7 @@ async def get_omi_tools_manifest():
             },
             {
                 "name": "code_feature",
-                "description": "Implement a feature in a GitHub repository using Claude Code AI agent. Use this when the user asks to 'code', 'implement', 'add feature', 'build', or 'create code' in a repository. Claude Code will explore the codebase, understand existing patterns, and generate proper code. Set merge=true if the user explicitly asks to merge the changes (e.g., 'code and merge', 'implement and merge it').",
+                "description": "Implement a feature in a GitHub repository using an external coding agent (Cursor Agent or Devin). Use this when the user asks to 'code', 'implement', 'add feature', 'build', or 'create code' in a repository. The agent will explore the codebase, understand existing patterns, and generate proper code. Set merge=true if the user explicitly asks to merge the changes (e.g., 'code and merge', 'implement and merge it').",
                 "endpoint": "/tools/code_feature",
                 "method": "POST",
                 "parameters": {
@@ -125,7 +132,7 @@ async def get_omi_tools_manifest():
                     "required": ["feature"]
                 },
                 "auth_required": True,
-                "status_message": "Claude Code is exploring your repo and coding..."
+                "status_message": "Agent is exploring your repo and coding..."
             },
             {
                 "name": "list_repos",
@@ -672,6 +679,28 @@ async def root(uid: str = Query(None)):
     repos = user.get("available_repos", [])
     selected_repo = user.get("selected_repo", "")
     github_username = user.get("github_username", "Unknown")
+    agent_provider = user.get("agent_provider") or os.getenv("DEFAULT_AGENT_PROVIDER", "cursor")
+    if agent_provider not in PROVIDERS:
+        agent_provider = "cursor"
+
+    provider_options = ""
+    for provider_key, meta in PROVIDERS.items():
+        selected_attr = 'selected' if provider_key == agent_provider else ''
+        provider_options += f'<option value="{provider_key}" {selected_attr}>{meta["label"]}</option>'
+
+    agent_api_keys = user.get("agent_api_keys", {})
+    current_agent_key = agent_api_keys.get(agent_provider, "")
+    masked_agent_key = (current_agent_key[:10] + "...") if current_agent_key else ""
+    masked_keys_by_provider = {
+        key: (value[:10] + "...") if value else ""
+        for key, value in agent_api_keys.items()
+    }
+    provider_labels_js = "{" + ",".join(
+        [f'"{key}":"{meta["label"]}"' for key, meta in PROVIDERS.items()]
+    ) + "}"
+    provider_keys_js = "{" + ",".join(
+        [f'"{key}":"{value}"' for key, value in masked_keys_by_provider.items()]
+    ) + "}"
 
     repo_options = ""
     for repo in repos:
@@ -709,31 +738,65 @@ async def root(uid: str = Query(None)):
                     <button class="btn btn-secondary btn-block" onclick="refreshRepos()">
                         Refresh Repositories
                     </button>
+                    <button class="btn btn-secondary btn-block" onclick="checkRepoAccess()">
+                        Check Repo Access
+                    </button>
                 </div>
 
                 <div class="card">
-                    <h3>Claude Code Settings</h3>
+                    <h3>Agent Settings</h3>
                     <p style="text-align: left; font-size: 14px; margin-bottom: 16px;">
-                        Add your Anthropic API key to enable AI coding features through chat
+                        Choose which coding agent to use and add its API key (optional).
                     </p>
 
+                    <label style="display: block; text-align: left; font-size: 12px; color: #8b949e; margin-bottom: 6px;">
+                        Agent Provider
+                    </label>
+                    <select id="agentProviderSelect" class="repo-select" onchange="updateAgentPlaceholder()">
+                        {provider_options}
+                    </select>
+
                     <input type="password"
-                           id="anthropicKey"
-                           placeholder="sk-ant-..."
+                           id="agentKey"
+                           placeholder="API key for selected provider"
                            style="width: 100%; padding: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; margin-bottom: 12px;"
-                           value="{user.get('anthropic_key', '')[:10] + '...' if user.get('anthropic_key') else ''}">
+                           value="{masked_agent_key}">
 
                     <div style="display: flex; gap: 8px;">
-                        <button class="btn btn-primary" onclick="saveAnthropicKey()" style="flex: 1;">
+                        <button class="btn btn-secondary" onclick="saveAgentProvider()">
+                            Save Provider
+                        </button>
+                        <button class="btn btn-primary" onclick="saveAgentKey()" style="flex: 1;">
                             Save API Key
                         </button>
-                        <button class="btn btn-secondary" onclick="deleteAnthropicKey()">
+                        <button class="btn btn-secondary" onclick="deleteAgentKey()">
                             Remove
                         </button>
                     </div>
 
+                    <div style="margin-top: 16px;">
+                        <label style="display: block; text-align: left; font-size: 12px; color: #8b949e; margin-bottom: 6px;">
+                            Test Agent Command
+                        </label>
+                        <input type="text"
+                               id="agentTestPrompt"
+                               placeholder="e.g. Summarize repo structure"
+                               style="width: 100%; padding: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; margin-bottom: 12px;">
+                        <label style="display: flex; align-items: center; gap: 8px; text-align: left; font-size: 12px; color: #8b949e; margin-bottom: 10px;">
+                            <input type="checkbox" id="agentTestAll" style="accent-color: #238636;">
+                            Send to all agents
+                        </label>
+                        <button class="btn btn-primary btn-block" onclick="sendAgentTest()">
+                            Send Test Command
+                        </button>
+                        <textarea id="agentTestLogs"
+                                  readonly
+                                  placeholder="Logs will appear here..."
+                                  style="width: 100%; height: 140px; margin-top: 12px; padding: 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 12px; resize: vertical;"></textarea>
+                    </div>
+
                     <p style="text-align: left; font-size: 12px; color: #8b949e; margin-top: 12px;">
-                        Get your API key from <a href="https://console.anthropic.com/" target="_blank" style="color: #58a6ff;">console.anthropic.com</a>
+                        Agent uses your GitHub OAuth token for repo access. Ensure you have write access.
                     </p>
                 </div>
 
@@ -821,8 +884,68 @@ async def root(uid: str = Query(None)):
                     }}
                 }}
 
-                async function saveAnthropicKey() {{
-                    const keyInput = document.getElementById('anthropicKey');
+                async function checkRepoAccess() {{
+                    const select = document.getElementById('repoSelect');
+                    const repo = select.value;
+
+                    if (!repo || repo === 'No repositories found') {{
+                        alert('Please select a valid repository');
+                        return;
+                    }}
+
+                    try {{
+                        const response = await fetch('/check-repo-access?uid={uid}&repo=' + encodeURIComponent(repo), {{
+                            method: 'POST'
+                        }});
+                        const data = await response.json();
+
+                        if (data.success) {{
+                            alert('Repo access: ' + data.message);
+                        }} else {{
+                            alert('Access check failed: ' + data.error);
+                        }}
+                    }} catch (error) {{
+                        alert('Error: ' + error.message);
+                    }}
+                }}
+
+                const agentProviderLabels = {provider_labels_js};
+                const agentProviderKeys = {provider_keys_js};
+
+                function getSelectedProvider() {{
+                    const select = document.getElementById('agentProviderSelect');
+                    return select.value;
+                }}
+
+                function updateAgentPlaceholder() {{
+                    const provider = getSelectedProvider();
+                    const label = agentProviderLabels[provider] || 'Agent';
+                    const input = document.getElementById('agentKey');
+                    input.placeholder = `${{label}} API key`;
+                    input.value = agentProviderKeys[provider] || '';
+                }}
+
+                async function saveAgentProvider() {{
+                    const provider = getSelectedProvider();
+                    try {{
+                        const response = await fetch('/save-agent-provider?uid={uid}&provider=' + encodeURIComponent(provider), {{
+                            method: 'POST'
+                        }});
+                        const data = await response.json();
+
+                        if (data.success) {{
+                            alert('Agent provider saved!');
+                        }} else {{
+                            alert('Failed to save: ' + data.error);
+                        }}
+                    }} catch (error) {{
+                        alert('Error: ' + error.message);
+                    }}
+                }}
+
+                async function saveAgentKey() {{
+                    const provider = getSelectedProvider();
+                    const keyInput = document.getElementById('agentKey');
                     const apiKey = keyInput.value.trim();
 
                     if (!apiKey) {{
@@ -830,34 +953,87 @@ async def root(uid: str = Query(None)):
                         return;
                     }}
 
-                    if (!apiKey.startsWith('sk-ant-')) {{
-                        alert('Invalid API key format. Should start with sk-ant-');
-                        return;
-                    }}
-
                     try {{
-                        // Save locally first
-                        await fetch('/save-anthropic-key?uid={uid}&key=' + encodeURIComponent(apiKey), {{
+                        await fetch('/save-agent-key?uid={uid}&provider=' + encodeURIComponent(provider) + '&key=' + encodeURIComponent(apiKey), {{
                             method: 'POST'
                         }});
 
-                        alert('Anthropic API key saved successfully!');
+                        alert('API key saved successfully!');
                     }} catch (error) {{
                         alert('Error: ' + error.message);
                     }}
                 }}
 
-                async function deleteAnthropicKey() {{
-                    if (!confirm('Remove your Anthropic API key?')) return;
+                async function deleteAgentKey() {{
+                    const provider = getSelectedProvider();
+                    if (!confirm('Remove the API key for this provider?')) return;
 
                     try {{
-                        await fetch('/delete-anthropic-key?uid={uid}', {{
+                        await fetch('/delete-agent-key?uid={uid}&provider=' + encodeURIComponent(provider), {{
                             method: 'POST'
                         }});
 
-                        document.getElementById('anthropicKey').value = '';
+                        document.getElementById('agentKey').value = '';
                         alert('API key removed successfully!');
                     }} catch (error) {{
+                        alert('Error: ' + error.message);
+                    }}
+                }}
+
+
+                async function sendAgentTest() {{
+                    const promptInput = document.getElementById('agentTestPrompt');
+                    const prompt = promptInput.value.trim();
+                    const provider = getSelectedProvider();
+                    const repo = document.getElementById('repoSelect').value;
+                    const sendAll = document.getElementById('agentTestAll').checked;
+                    const logsEl = document.getElementById('agentTestLogs');
+
+                    if (!prompt) {{
+                        alert('Please enter a test command');
+                        return;
+                    }}
+
+                    try {{
+                        const response = await fetch('/test-agent', {{
+                            method: 'POST',
+                            headers: {{
+                                'Content-Type': 'application/json'
+                            }},
+                            body: JSON.stringify({{
+                                uid: '{uid}',
+                                prompt,
+                                provider,
+                                repo,
+                                all: sendAll
+                            }})
+                        }});
+                        const data = await response.json();
+
+                        if (data.success) {{
+                            const logs = data.logs || [];
+                            const lines = [];
+                            for (const entry of logs) {{
+                                const status = entry.success ? 'OK' : 'ERR';
+                                const msg = entry.message || '';
+                                const url = entry.pr_url ? ' PR: ' + entry.pr_url : '';
+                                lines.push(`[${{entry.provider}}] ${{status}} ${{msg}}${{url}}`);
+                            }}
+                            logsEl.value = lines.join('\\n');
+                            if (!logs.length && data.message) {{
+                                logsEl.value = data.message;
+                            }}
+                            if (!sendAll) {{
+                                const info = data.message || 'Command sent successfully';
+                                const prUrl = data.pr_url ? '\\nPR: ' + data.pr_url : '';
+                                alert(info + prUrl);
+                            }}
+                        }} else {{
+                            logsEl.value = 'Agent test failed: ' + data.error;
+                            alert('Agent test failed: ' + data.error);
+                        }}
+                    }} catch (error) {{
+                        logsEl.value = 'Error: ' + error.message;
                         alert('Error: ' + error.message);
                     }}
                 }}
@@ -1083,49 +1259,203 @@ async def refresh_repos(uid: str = Query(...)):
         return {"success": False, "error": str(e)}
 
 
-@app.get("/get-anthropic-key")
-async def get_anthropic_key(uid: str = Query(...)):
-    """Get user's Anthropic API key."""
+@app.post("/check-repo-access")
+async def check_repo_access(
+    uid: str = Query(...),
+    repo: str = Query(None)
+):
+    """Check authenticated user's permissions for a repository."""
     try:
-        key = SimpleUserStorage.get_anthropic_key(uid)
-        if key:
-            return {"success": True, "key": key}
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return {"success": False, "error": "User not authenticated"}
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return {"success": False, "error": error}
+
+        permissions = github_client.get_repo_permissions(user["access_token"], repo_full_name)
+        if not permissions:
+            return {"success": False, "error": "Could not fetch repo permissions"}
+
+        if permissions.get("admin"):
+            level = "admin"
+        elif permissions.get("push"):
+            level = "write"
+        elif permissions.get("pull"):
+            level = "read"
         else:
-            return {"success": False, "error": "No key found"}
+            level = "none"
+
+        return {
+            "success": True,
+            "repo": repo_full_name,
+            "permissions": permissions,
+            "message": f"{level} access"
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
-@app.post("/save-anthropic-key")
-async def save_anthropic_key(
+@app.post("/save-agent-provider")
+async def save_agent_provider(
     uid: str = Query(...),
-    key: str = Query(...)
+    provider: str = Query(...)
 ):
-    """Save user's Anthropic API key."""
+    """Save user's agent provider selection."""
     try:
-        # Create user if doesn't exist
+        provider = provider.lower().strip()
+        if provider not in PROVIDERS:
+            return {"success": False, "error": "Unsupported provider"}
+
         user = SimpleUserStorage.get_user(uid)
         if not user:
             SimpleUserStorage.save_user(uid=uid, access_token="", github_username="", selected_repo="", available_repos=[])
 
-        success = SimpleUserStorage.save_anthropic_key(uid, key)
+        success = SimpleUserStorage.save_agent_provider(uid, provider)
         if success:
-            return {"success": True, "message": "Anthropic API key saved"}
-        else:
-            return {"success": False, "error": "Failed to save"}
+            return {"success": True, "message": "Agent provider saved"}
+        return {"success": False, "error": "Failed to save"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
-@app.post("/delete-anthropic-key")
-async def delete_anthropic_key(uid: str = Query(...)):
-    """Delete user's Anthropic API key."""
+@app.post("/save-agent-key")
+async def save_agent_key(
+    uid: str = Query(...),
+    provider: str = Query(...),
+    key: str = Query(...)
+):
+    """Save user's API key for an agent provider."""
     try:
-        success = SimpleUserStorage.delete_anthropic_key(uid)
+        provider = provider.lower().strip()
+        if provider not in PROVIDERS:
+            return {"success": False, "error": "Unsupported provider"}
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user:
+            SimpleUserStorage.save_user(uid=uid, access_token="", github_username="", selected_repo="", available_repos=[])
+
+        success = SimpleUserStorage.save_agent_api_key(uid, provider, key)
         if success:
-            return {"success": True, "message": "Anthropic API key deleted"}
-        else:
-            return {"success": False, "error": "Key not found"}
+            return {"success": True, "message": "Agent API key saved"}
+        return {"success": False, "error": "Failed to save"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/delete-agent-key")
+async def delete_agent_key(
+    uid: str = Query(...),
+    provider: str = Query(...)
+):
+    """Delete user's API key for an agent provider."""
+    try:
+        provider = provider.lower().strip()
+        if provider not in PROVIDERS:
+            return {"success": False, "error": "Unsupported provider"}
+
+        success = SimpleUserStorage.delete_agent_api_key(uid, provider)
+        if success:
+            return {"success": True, "message": "Agent API key deleted"}
+        return {"success": False, "error": "Key not found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/test-agent")
+async def test_agent(request: Request):
+    """Send a direct test command to the selected agent provider."""
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        prompt = body.get("prompt")
+        repo = body.get("repo")
+        provider_override = body.get("provider")
+        send_all = bool(body.get("all"))
+
+        if not uid or not prompt:
+            return {"success": False, "error": "User ID and prompt are required"}
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return {"success": False, "error": "User not authenticated"}
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return {"success": False, "error": error}
+
+        permissions = github_client.get_repo_permissions(user["access_token"], repo_full_name)
+        if not permissions or not (permissions.get("push") or permissions.get("admin")):
+            return {
+                "success": False,
+                "error": "GitHub token does not have write access to this repo."
+            }
+
+        import time
+        logs = []
+
+        providers_to_run = list(PROVIDERS.keys()) if send_all else [provider_override or SimpleUserStorage.get_agent_provider(uid) or os.getenv("DEFAULT_AGENT_PROVIDER", "cursor")]
+
+        for provider_name in providers_to_run:
+            agent_provider = provider_name if provider_name in PROVIDERS else "cursor"
+            provider_label = get_provider_label(agent_provider)
+            provider_key = SimpleUserStorage.get_agent_api_key(uid, agent_provider) or get_provider_default_key(agent_provider)
+            if not provider_key:
+                env_key = PROVIDERS[agent_provider]["env_key"]
+                logs.append({
+                    "provider": provider_label,
+                    "success": False,
+                    "message": f"Missing API key (set {env_key})"
+                })
+                continue
+
+            branch_name = f"{agent_provider}-test-{int(time.time())}"
+            result = run_agent_provider(
+                provider=agent_provider,
+                repo_full_name=repo_full_name,
+                feature_description=prompt,
+                branch_name=branch_name,
+                github_token=user["access_token"],
+                api_key=provider_key,
+                merge=False
+            )
+
+            if not result.get("success"):
+                logs.append({
+                    "provider": provider_label,
+                    "success": False,
+                    "message": result.get("message")
+                })
+                continue
+
+            data = result.get("data") or {}
+            logs.append({
+                "provider": provider_label,
+                "success": True,
+                "message": result.get("message") or "Command sent",
+                "pr_url": data.get("pr_url") or data.get("pull_request_url"),
+                "data": data
+            })
+
+        if not logs:
+            return {"success": False, "error": "No agents were executed"}
+
+        # For single-provider calls, keep the original response shape
+        if not send_all and len(logs) == 1:
+            entry = logs[0]
+            if not entry["success"]:
+                return {"success": False, "error": entry.get("message")}
+            return {
+                "success": True,
+                "message": entry.get("message"),
+                "pr_url": entry.get("pr_url"),
+                "data": entry.get("data"),
+                "logs": logs
+            }
+
+        return {"success": True, "logs": logs}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1151,11 +1481,16 @@ async def tool_code_feature(request: Request):
                 error="Please connect your GitHub account first in the app settings."
             )
 
-        # Get Anthropic API key
-        anthropic_key = SimpleUserStorage.get_anthropic_key(uid)
-        if not anthropic_key:
+        agent_provider = SimpleUserStorage.get_agent_provider(uid) or os.getenv("DEFAULT_AGENT_PROVIDER", "cursor")
+        if agent_provider not in PROVIDERS:
+            agent_provider = "cursor"
+
+        provider_label = get_provider_label(agent_provider)
+        provider_key = SimpleUserStorage.get_agent_api_key(uid, agent_provider) or get_provider_default_key(agent_provider)
+        if not provider_key:
+            env_key = PROVIDERS[agent_provider]["env_key"]
             return ChatToolResponse(
-                error="Please add your Anthropic API key in GitHub settings at https://omi-github.up.railway.app"
+                error=f"Please add your {provider_label} API key in GitHub settings or set {env_key} on the server."
             )
 
         # Determine target repository
@@ -1165,8 +1500,16 @@ async def tool_code_feature(request: Request):
                 error="No repository specified. Please set a default repository in settings."
             )
 
-        # Start coding session with agentic Claude (like Claude Code CLI)
-        from claude_code_agentic import run_agentic_claude_on_repo
+        permissions = github_client.get_repo_permissions(user["access_token"], repo_full_name)
+        if not permissions or not (permissions.get("push") or permissions.get("admin")):
+            return ChatToolResponse(
+                error=(
+                    "Your GitHub token does not have write access to this repo. "
+                    "Grant write access on GitHub and re-authenticate, then try again."
+                )
+            )
+
+        # Start coding session with external agent provider
         from claude_code_cli import (
             create_pr_with_github_api,
             merge_pr_with_github_api,
@@ -1175,53 +1518,34 @@ async def tool_code_feature(request: Request):
         import time
 
         owner, repo_name = repo_full_name.split('/')
-        branch_name = f"claude-code-{int(time.time())}"
-        repo_url = f"https://github.com/{repo_full_name}"
+        branch_name = f"{agent_provider}-agent-{int(time.time())}"
 
-        # Run agentic Claude to implement the feature
-        log(f"Running agentic Claude on {repo_full_name} to implement: {feature}")
+        log(f"Running {provider_label} on {repo_full_name} to implement: {feature}")
 
-        result = run_agentic_claude_on_repo(
-            repo_url=repo_url,
+        result = run_agent_provider(
+            provider=agent_provider,
+            repo_full_name=repo_full_name,
             feature_description=feature,
             branch_name=branch_name,
             github_token=user["access_token"],
-            anthropic_key=anthropic_key
+            api_key=provider_key,
+            merge=merge
         )
 
-        if not result.get('success'):
+        if not result.get("success"):
             return ChatToolResponse(error=f"Failed to implement feature: {result.get('message')}")
 
-        default_branch = result.get('default_branch', 'main')
-        log(f"Successfully pushed to branch {branch_name}, default branch: {default_branch}")
+        data = result.get("data") or {}
+        pr_url = data.get("pr_url") or data.get("pull_request_url") or data.get("url")
+        pr_number = data.get("pr_number") or data.get("pull_request_number")
+        default_branch = data.get("default_branch") or get_default_branch(owner, repo_name, user["access_token"])
+        returned_branch = data.get("branch") or branch_name
 
-        # Create pull request
-        pr_title = f"AI: {feature[:60]}"
-        pr_body = f"""## Feature Request
-{feature}
-
-## Implementation
-Claude Code explored the repository and implemented this feature following existing patterns and conventions.
-
----
-*Generated by Claude Code (agentic) via Omi*
-"""
-
-        pr_result = create_pr_with_github_api(
-            owner=owner,
-            repo=repo_name,
-            branch=branch_name,
-            title=pr_title,
-            body=pr_body,
-            github_token=user["access_token"],
-            base_branch=default_branch
-        )
-
-        if pr_result:
-            pr_url = pr_result['pr_url']
-            pr_number = pr_result['pr_number']
-
-            # Merge if requested
+        if pr_url:
+            if merge and data.get("merged") is True:
+                return ChatToolResponse(
+                    result=f"✅ **Feature implemented and merged!**\n\n**Pull Request:** {pr_url}\n\nThe changes have been merged into `{default_branch}`. ✅"
+                )
             if merge:
                 log(f"Merging PR #{pr_number}...")
                 merged = merge_pr_with_github_api(
@@ -1229,25 +1553,69 @@ Claude Code explored the repository and implemented this feature following exist
                     repo=repo_name,
                     pr_number=pr_number,
                     github_token=user["access_token"],
-                    merge_method='squash'  # Use squash merge for cleaner history
+                    merge_method='squash'
                 )
-
                 if merged:
                     return ChatToolResponse(
                         result=f"✅ **Feature implemented and merged!**\n\n**Pull Request:** {pr_url}\n\nThe changes have been merged into `{default_branch}`. ✅"
                     )
-                else:
-                    return ChatToolResponse(
-                        result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\n⚠️ Could not auto-merge. Please merge manually on GitHub (there might be conflicts or protections)."
-                    )
-            else:
                 return ChatToolResponse(
-                    result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\nReview the AI-generated code and merge when ready."
+                    result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\n⚠️ Could not auto-merge. Please merge manually on GitHub (there might be conflicts or protections)."
                 )
-        else:
             return ChatToolResponse(
-                error=f"Code pushed to branch `{branch_name}` but failed to create PR. You can manually create it on GitHub."
+                result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\nReview the AI-generated code and merge when ready."
             )
+
+        # If provider only pushed a branch, create PR via GitHub API
+        pr_title = f"AI: {feature[:60]}"
+        pr_body = f"""## Feature Request
+{feature}
+
+## Implementation
+{provider_label} explored the repository and implemented this feature following existing patterns and conventions.
+
+---
+*Generated by {provider_label} via Omi*
+"""
+
+        pr_result = create_pr_with_github_api(
+            owner=owner,
+            repo=repo_name,
+            branch=returned_branch,
+            title=pr_title,
+            body=pr_body,
+            github_token=user["access_token"],
+            base_branch=default_branch
+        )
+
+        if pr_result:
+            pr_url = pr_result["pr_url"]
+            pr_number = pr_result["pr_number"]
+
+            if merge:
+                log(f"Merging PR #{pr_number}...")
+                merged = merge_pr_with_github_api(
+                    owner=owner,
+                    repo=repo_name,
+                    pr_number=pr_number,
+                    github_token=user["access_token"],
+                    merge_method='squash'
+                )
+                if merged:
+                    return ChatToolResponse(
+                        result=f"✅ **Feature implemented and merged!**\n\n**Pull Request:** {pr_url}\n\nThe changes have been merged into `{default_branch}`. ✅"
+                    )
+                return ChatToolResponse(
+                    result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\n⚠️ Could not auto-merge. Please merge manually on GitHub (there might be conflicts or protections)."
+                )
+
+            return ChatToolResponse(
+                result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\nReview the AI-generated code and merge when ready."
+            )
+
+        return ChatToolResponse(
+            error=f"Agent completed but failed to create PR. Branch `{returned_branch}` was pushed."
+        )
 
     except Exception as e:
         import traceback
