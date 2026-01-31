@@ -921,7 +921,7 @@ async def root(uid: str = Query(None)):
                     const provider = getSelectedProvider();
                     const label = agentProviderLabels[provider] || 'Agent';
                     const input = document.getElementById('agentKey');
-                    input.placeholder = `${{label}} API key`;
+                    input.placeholder = label + ' API key';
                     input.value = agentProviderKeys[provider] || '';
                 }}
 
@@ -1017,7 +1017,7 @@ async def root(uid: str = Query(None)):
                                 const status = entry.success ? 'OK' : 'ERR';
                                 const msg = entry.message || '';
                                 const url = entry.pr_url ? ' PR: ' + entry.pr_url : '';
-                                lines.push(`[${{entry.provider}}] ${{status}} ${{msg}}${{url}}`);
+                                lines.push('[' + entry.provider + '] ' + status + ' ' + msg + url);
                             }}
                             logsEl.value = lines.join('\\n');
                             if (!logs.length && data.message) {{
