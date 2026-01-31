@@ -370,3 +370,28 @@ class GitHubClient:
             print(f"⚠️  Error fetching labels: {e}")
             return []
 
+    def get_repo_permissions(self, access_token: str, repo_full_name: str) -> Optional[Dict]:
+        """
+        Get repository permissions for the authenticated user.
+        Returns permissions dict (admin/push/pull) if successful.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+
+            if response.status_code == 200:
+                repo = response.json()
+                return repo.get("permissions", {})
+            else:
+                print(f"⚠️  Could not fetch repo permissions: {response.status_code}")
+                return None
+
+        except Exception as e:
+            print(f"⚠️  Error fetching repo permissions: {e}")
+            return None
+
