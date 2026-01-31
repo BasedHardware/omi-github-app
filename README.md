@@ -2,6 +2,8 @@
 
 Voice-activated GitHub issue creation through your OMI device. Simply say "Feedback Post" followed by your detailed problem description, and AI will automatically create a properly formatted GitHub issue!
 
+> **Test Change**: This is a test modification for merge testing purposes.
+
 ## ✨ Features
 
 - **🎤 Voice-Activated** - Say "Feedback Post" and describe your problem
