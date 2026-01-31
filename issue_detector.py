@@ -7,7 +7,8 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_openai_key = os.getenv("OPENAI_API_KEY")
+client = AsyncOpenAI(api_key=_openai_key) if _openai_key else None
 
 
 async def ai_select_labels(title: str, description: str, available_labels: List[str]) -> List[str]:
@@ -16,6 +17,9 @@ async def ai_select_labels(title: str, description: str, available_labels: List[
     Returns list of selected label names (max 3).
     """
     if not available_labels:
+        return []
+    if client is None:
+        # OpenAI key not configured; skip AI label selection.
         return []
 
     try:
