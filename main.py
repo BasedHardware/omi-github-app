@@ -1898,7 +1898,7 @@ def get_mobile_css() -> str:
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("APP_PORT", 8000))
+    port = int(os.getenv("PORT", os.getenv("APP_PORT", 8000)))
     host = os.getenv("APP_HOST", "0.0.0.0")
 
     print("OMI GitHub Issues Integration (Chat Tools)")
