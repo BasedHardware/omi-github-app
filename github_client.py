@@ -395,3 +395,68 @@ class GitHubClient:
             print(f"⚠️  Error fetching repo permissions: {e}")
             return None
 
+    def create_pull_request(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        title: str,
+        body: str,
+        head: str,
+        base: str = "main"
+    ) -> Optional[Dict]:
+        """
+        Create a pull request in the specified repository.
+        
+        Args:
+            access_token: GitHub access token
+            repo_full_name: "owner/repo"
+            title: PR title
+            body: PR description
+            head: The name of the branch where your changes are implemented
+            base: The name of the branch you want the changes pulled into (default: "main")
+        
+        Returns:
+            PR data if successful, None otherwise
+        """
+        try:
+            pr_data = {
+                "title": title,
+                "body": body,
+                "head": head,
+                "base": base
+            }
+
+            response = requests.post(
+                f"{self.api_base}/repos/{repo_full_name}/pulls",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json=pr_data
+            )
+
+            if response.status_code == 201:
+                pr = response.json()
+                return {
+                    "success": True,
+                    "pr_number": pr["number"],
+                    "pr_url": pr["html_url"],
+                    "title": pr["title"]
+                }
+            else:
+                error_msg = response.json().get("message", response.text)
+                print(f"❌ GitHub API error: {response.status_code} - {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"GitHub API error: {error_msg}"
+                }
+
+        except Exception as e:
+            print(f"❌ Error creating pull request: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
