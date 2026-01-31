@@ -1017,7 +1017,8 @@ async def root(uid: str = Query(None)):
                                 const status = entry.success ? 'OK' : 'ERR';
                                 const msg = entry.message || '';
                                 const url = entry.pr_url ? ' PR: ' + entry.pr_url : '';
-                                lines.push('[' + entry.provider + '] ' + status + ' ' + msg + url);
+                                const agentUrl = entry.agent_url ? ' Agent: ' + entry.agent_url : '';
+                                lines.push('[' + entry.provider + '] ' + status + ' ' + msg + url + agentUrl);
                             }}
                             logsEl.value = lines.join('\\n');
                             if (!logs.length && data.message) {{
@@ -1430,11 +1431,22 @@ async def test_agent(request: Request):
                 continue
 
             data = result.get("data") or {}
+            pr_url = None
+            agent_url = None
+            if agent_provider == "cursor":
+                target = data.get("target") or {}
+                pr_url = target.get("prUrl")
+                agent_url = target.get("url") or data.get("url")
+            elif agent_provider == "devin":
+                agent_url = data.get("url")
+            else:
+                pr_url = data.get("pr_url") or data.get("pull_request_url")
             logs.append({
                 "provider": provider_label,
                 "success": True,
                 "message": result.get("message") or "Command sent",
-                "pr_url": data.get("pr_url") or data.get("pull_request_url"),
+                "pr_url": pr_url,
+                "agent_url": agent_url,
                 "data": data
             })
 
@@ -1536,10 +1548,26 @@ async def tool_code_feature(request: Request):
             return ChatToolResponse(error=f"Failed to implement feature: {result.get('message')}")
 
         data = result.get("data") or {}
-        pr_url = data.get("pr_url") or data.get("pull_request_url") or data.get("url")
-        pr_number = data.get("pr_number") or data.get("pull_request_number")
         default_branch = data.get("default_branch") or get_default_branch(owner, repo_name, user["access_token"])
         returned_branch = data.get("branch") or branch_name
+
+        # Provider-specific parsing
+        pr_url = None
+        pr_number = None
+        agent_url = None
+        agent_status = None
+
+        if agent_provider == "cursor":
+            target = data.get("target") or {}
+            pr_url = target.get("prUrl")
+            agent_url = target.get("url") or data.get("url")
+            agent_status = data.get("status")
+        elif agent_provider == "devin":
+            agent_url = data.get("url")
+            agent_status = data.get("status") or data.get("session_id")
+        else:
+            pr_url = data.get("pr_url") or data.get("pull_request_url")
+            pr_number = data.get("pr_number") or data.get("pull_request_number")
 
         if pr_url:
             if merge and data.get("merged") is True:
@@ -1564,6 +1592,16 @@ async def tool_code_feature(request: Request):
                 )
             return ChatToolResponse(
                 result=f"✅ **Feature implemented!**\n\n**Pull Request:** {pr_url}\n\nReview the AI-generated code and merge when ready."
+            )
+
+        if agent_provider in ("cursor", "devin"):
+            status_line = f"Status: {agent_status}" if agent_status else "Status: running"
+            url_line = f"URL: {agent_url}" if agent_url else ""
+            return ChatToolResponse(
+                result="✅ **Agent started**\n\n"
+                f"{status_line}\n"
+                f"{url_line}\n\n"
+                "The agent is running asynchronously. A PR will appear once it finishes."
             )
 
         # If provider only pushed a branch, create PR via GitHub API
