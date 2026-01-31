@@ -7,7 +7,13 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_openai_client():
+    """Get OpenAI client, initialized lazily."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    return AsyncOpenAI(api_key=api_key)
 
 
 async def ai_select_labels(title: str, description: str, available_labels: List[str]) -> List[str]:
@@ -16,6 +22,11 @@ async def ai_select_labels(title: str, description: str, available_labels: List[
     Returns list of selected label names (max 3).
     """
     if not available_labels:
+        return []
+
+    client = get_openai_client()
+    if not client:
+        print("OpenAI API key not set, skipping AI label selection", flush=True)
         return []
 
     try:
