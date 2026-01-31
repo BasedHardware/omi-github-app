@@ -388,8 +388,16 @@ class GitHubClient:
                 repo = response.json()
                 return repo.get("permissions", {})
             else:
-                print(f"⚠️  Could not fetch repo permissions: {response.status_code}")
-                return None
+                error_msg = None
+                try:
+                    error_msg = response.json().get("message")
+                except Exception:
+                    error_msg = response.text
+                print(f"⚠️  Could not fetch repo permissions: {response.status_code} - {error_msg}")
+                return {
+                    "_error": error_msg or "Unknown error",
+                    "_status": response.status_code
+                }
 
         except Exception as e:
             print(f"⚠️  Error fetching repo permissions: {e}")

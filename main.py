@@ -1278,6 +1278,11 @@ async def check_repo_access(
         permissions = github_client.get_repo_permissions(user["access_token"], repo_full_name)
         if not permissions:
             return {"success": False, "error": "Could not fetch repo permissions"}
+        if permissions.get("_error"):
+            return {
+                "success": False,
+                "error": f"GitHub permissions check failed ({permissions.get('_status')}): {permissions.get('_error')}"
+            }
 
         if permissions.get("admin"):
             level = "admin"
@@ -1513,7 +1518,15 @@ async def tool_code_feature(request: Request):
             )
 
         permissions = github_client.get_repo_permissions(user["access_token"], repo_full_name)
-        if not permissions or not (permissions.get("push") or permissions.get("admin")):
+        if not permissions:
+            return ChatToolResponse(
+                error="Could not fetch repo permissions. Please re-authenticate GitHub."
+            )
+        if permissions.get("_error"):
+            return ChatToolResponse(
+                error=f"GitHub permissions check failed ({permissions.get('_status')}): {permissions.get('_error')}"
+            )
+        if not (permissions.get("push") or permissions.get("admin")):
             return ChatToolResponse(
                 error=(
                     "Your GitHub token does not have write access to this repo. "
