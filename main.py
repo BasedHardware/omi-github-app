@@ -239,6 +239,12 @@ async def get_omi_tools_manifest():
     }
 
 
+@app.get("/manifest.json")
+async def get_manifest_alias():
+    """Alias for Omi tools manifest."""
+    return await get_omi_tools_manifest()
+
+
 # ============================================
 # Chat Tool Endpoints
 # ============================================
