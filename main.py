@@ -234,6 +234,58 @@ async def get_omi_tools_manifest():
                 },
                 "auth_required": True,
                 "status_message": "Adding comment..."
+            },
+            {
+                "name": "list_prs",
+                "description": "List pull requests in a GitHub repository. Use this when the user wants to see pull requests, check open PRs, view recent PRs, or find a PR number.",
+                "endpoint": "/tools/list_prs",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository to list PRs from (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        },
+                        "state": {
+                            "type": "string",
+                            "enum": ["open", "closed", "all"],
+                            "description": "Filter by PR state. Defaults to 'open'."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of PRs to return (default: 10, max: 50)"
+                        }
+                    },
+                    "required": []
+                },
+                "auth_required": True,
+                "status_message": "Getting pull requests..."
+            },
+            {
+                "name": "merge_pr",
+                "description": "Merge a pull request in a GitHub repository. Use this when the user asks to merge a PR, accept a PR, merge changes, or apply a pull request. Requires the PR number.",
+                "endpoint": "/tools/merge_pr",
+                "method": "POST",
+                "parameters": {
+                    "properties": {
+                        "pr_number": {
+                            "type": "integer",
+                            "description": "The pull request number to merge. Required."
+                        },
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository the PR is in (format: 'owner/repo'). If not provided, uses the user's default repository."
+                        },
+                        "merge_method": {
+                            "type": "string",
+                            "enum": ["squash", "merge", "rebase"],
+                            "description": "How to merge the PR. Defaults to 'squash'. Use 'merge' for a merge commit, 'rebase' for rebasing."
+                        }
+                    },
+                    "required": ["pr_number"]
+                },
+                "auth_required": True,
+                "status_message": "Merging pull request..."
             }
         ]
     }
@@ -586,6 +638,141 @@ async def tool_add_comment(request: Request):
     except Exception as e:
         log(f"Error adding comment: {e}")
         return ChatToolResponse(error=f"Failed to add comment: {str(e)}")
+
+
+@app.post("/tools/list_prs", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_list_prs(request: Request):
+    """
+    List pull requests in a GitHub repository.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        repo = body.get("repo")
+        state = body.get("state", "open")
+        limit = min(body.get("limit", 10), 50)
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        prs = github_client.list_pull_requests(
+            access_token=user["access_token"],
+            repo_full_name=repo_full_name,
+            state=state,
+            per_page=limit
+        )
+
+        if not prs:
+            return ChatToolResponse(result=f"No {state} pull requests found in {repo_full_name}.")
+
+        result_parts = [f"**{state.title()} Pull Requests in {repo_full_name} ({len(prs)})**", ""]
+        for pr in prs:
+            draft_str = " (Draft)" if pr.get("draft") else ""
+            result_parts.append(
+                f"• **#{pr['number']}** - {pr['title']}{draft_str} — by {pr.get('user', 'unknown')} ({pr['head']} → {pr['base']})"
+            )
+
+        return ChatToolResponse(result="\n".join(result_parts))
+
+    except Exception as e:
+        log(f"Error listing PRs: {e}")
+        return ChatToolResponse(error=f"Failed to list pull requests: {str(e)}")
+
+
+@app.post("/tools/merge_pr", tags=["chat_tools"], response_model=ChatToolResponse)
+async def tool_merge_pr(request: Request):
+    """
+    Merge a pull request in a GitHub repository.
+    """
+    try:
+        body = await request.json()
+        uid = body.get("uid")
+        pr_number = body.get("pr_number")
+        repo = body.get("repo")
+        merge_method = body.get("merge_method", "squash")
+
+        if not uid:
+            return ChatToolResponse(error="User ID is required")
+
+        if not pr_number:
+            return ChatToolResponse(error="Pull request number is required")
+
+        if merge_method not in ("squash", "merge", "rebase"):
+            return ChatToolResponse(error="merge_method must be 'squash', 'merge', or 'rebase'")
+
+        user = SimpleUserStorage.get_user(uid)
+        if not user or not user.get("access_token"):
+            return ChatToolResponse(
+                error="Please connect your GitHub account first in the app settings."
+            )
+
+        repo_full_name, error = get_repo_for_request(user, repo)
+        if error:
+            return ChatToolResponse(error=error)
+
+        access_token = user["access_token"]
+
+        # Check permissions
+        permissions = github_client.get_repo_permissions(access_token, repo_full_name)
+        if not permissions or not (permissions.get("push") or permissions.get("admin")):
+            return ChatToolResponse(
+                error="You don't have write access to this repository. Cannot merge PRs."
+            )
+
+        # Get PR details first to validate it exists and is open
+        pr = github_client.get_pull_request(access_token, repo_full_name, int(pr_number))
+        if not pr:
+            return ChatToolResponse(error=f"Pull request #{pr_number} not found in {repo_full_name}")
+
+        if pr.get("merged"):
+            return ChatToolResponse(
+                result=f"Pull request **#{pr_number}** ({pr['title']}) is already merged."
+            )
+
+        if pr["state"] != "open":
+            return ChatToolResponse(
+                error=f"Pull request **#{pr_number}** is {pr['state']}. Only open PRs can be merged."
+            )
+
+        if pr.get("draft"):
+            return ChatToolResponse(
+                error=f"Pull request **#{pr_number}** is a draft. Please mark it as ready for review before merging."
+            )
+
+        # Merge the PR
+        log(f"Merging PR #{pr_number} in {repo_full_name} using {merge_method}...")
+        result = github_client.merge_pull_request(
+            access_token=access_token,
+            repo_full_name=repo_full_name,
+            pr_number=int(pr_number),
+            merge_method=merge_method
+        )
+
+        if result.get("success"):
+            return ChatToolResponse(
+                result=f"**PR #{pr_number} Merged!**\n\n"
+                f"**{pr['title']}**\n"
+                f"Merged `{pr['head']}` into `{pr['base']}` ({merge_method})\n"
+                f"URL: {pr['url']}"
+            )
+        else:
+            return ChatToolResponse(
+                error=f"Failed to merge PR #{pr_number}: {result.get('error', 'Unknown error')}"
+            )
+
+    except Exception as e:
+        log(f"Error merging PR: {e}")
+        return ChatToolResponse(error=f"Failed to merge pull request: {str(e)}")
 
 
 # ============================================

@@ -370,6 +370,158 @@ class GitHubClient:
             print(f"⚠️  Error fetching labels: {e}")
             return []
 
+    def list_pull_requests(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        state: str = "open",
+        per_page: int = 10
+    ) -> List[Dict]:
+        """
+        List pull requests in a repository.
+        Returns list of PR dicts.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/pulls",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                params={
+                    "state": state,
+                    "per_page": per_page,
+                    "sort": "created",
+                    "direction": "desc"
+                }
+            )
+
+            if response.status_code == 200:
+                pulls = response.json()
+                return [
+                    {
+                        "number": pr["number"],
+                        "title": pr["title"],
+                        "state": pr["state"],
+                        "user": pr["user"]["login"] if pr.get("user") else None,
+                        "head": pr["head"]["ref"],
+                        "base": pr["base"]["ref"],
+                        "mergeable": pr.get("mergeable"),
+                        "url": pr["html_url"],
+                        "created_at": pr["created_at"],
+                        "draft": pr.get("draft", False),
+                    }
+                    for pr in pulls
+                ]
+            else:
+                print(f"Error listing PRs: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"Error listing PRs: {e}")
+            return []
+
+    def get_pull_request(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        pr_number: int
+    ) -> Optional[Dict]:
+        """
+        Get details of a specific pull request.
+        """
+        try:
+            response = requests.get(
+                f"{self.api_base}/repos/{repo_full_name}/pulls/{pr_number}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+
+            if response.status_code == 200:
+                pr = response.json()
+                return {
+                    "number": pr["number"],
+                    "title": pr["title"],
+                    "state": pr["state"],
+                    "body": pr.get("body", ""),
+                    "user": pr["user"]["login"] if pr.get("user") else None,
+                    "head": pr["head"]["ref"],
+                    "base": pr["base"]["ref"],
+                    "mergeable": pr.get("mergeable"),
+                    "mergeable_state": pr.get("mergeable_state"),
+                    "merged": pr.get("merged", False),
+                    "url": pr["html_url"],
+                    "created_at": pr["created_at"],
+                    "updated_at": pr["updated_at"],
+                    "draft": pr.get("draft", False),
+                    "labels": [label["name"] for label in pr.get("labels", [])],
+                    "reviewers": [r["login"] for r in pr.get("requested_reviewers", [])],
+                }
+            elif response.status_code == 404:
+                return None
+            else:
+                print(f"Error getting PR: {response.status_code}")
+                return None
+
+        except Exception as e:
+            print(f"Error getting PR: {e}")
+            return None
+
+    def merge_pull_request(
+        self,
+        access_token: str,
+        repo_full_name: str,
+        pr_number: int,
+        merge_method: str = "squash"
+    ) -> Dict:
+        """
+        Merge a pull request.
+        merge_method: 'merge', 'squash', or 'rebase'
+        Returns dict with success status and message.
+        """
+        try:
+            response = requests.put(
+                f"{self.api_base}/repos/{repo_full_name}/pulls/{pr_number}/merge",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                },
+                json={"merge_method": merge_method}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "sha": data.get("sha"),
+                    "message": data.get("message", "Pull request merged")
+                }
+            elif response.status_code == 405:
+                return {
+                    "success": False,
+                    "error": "PR cannot be merged (not mergeable, or merge blocked by branch protection rules)"
+                }
+            elif response.status_code == 409:
+                return {
+                    "success": False,
+                    "error": "Merge conflict — the PR has conflicts that must be resolved first"
+                }
+            else:
+                error_msg = response.json().get("message", response.text)
+                return {
+                    "success": False,
+                    "error": f"GitHub API error ({response.status_code}): {error_msg}"
+                }
+
+        except Exception as e:
+            print(f"Error merging PR: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def get_repo_permissions(self, access_token: str, repo_full_name: str) -> Optional[Dict]:
         """
         Get repository permissions for the authenticated user.
