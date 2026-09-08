@@ -86,17 +86,19 @@ class GitHubClient:
         try:
             repos = []
             
-            # Get user's own repos
-            response = requests.get(
-                f"{self.api_base}/user/repos",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github.v3+json"
-                },
-                params={"per_page": per_page, "sort": "updated"}
-            )
-            
-            if response.status_code == 200:
+            page = 1
+            while True:
+                response = requests.get(
+                    f"{self.api_base}/user/repos",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/vnd.github.v3+json"
+                    },
+                    params={"per_page": per_page, "sort": "updated", "page": page}
+                )
+                if response.status_code != 200:
+                    return []
+
                 user_repos = response.json()
                 for repo in user_repos:
                     repos.append({
@@ -107,6 +109,9 @@ class GitHubClient:
                         "description": repo.get("description", ""),
                         "url": repo["html_url"]
                     })
+                if "next" not in response.links:
+                    break
+                page += 1
             
             return repos
             
